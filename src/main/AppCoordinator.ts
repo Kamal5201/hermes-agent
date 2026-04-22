@@ -314,7 +314,8 @@ export class AppCoordinator extends EventEmitter {
   }
 
   private initializeServices(): AppCoordinatorServices {
-    const databasePath = path.resolve(PROJECT_ROOT, 'data', 'hermes.db');
+    const databaseDir = app.getPath('userData');
+    const databasePath = path.join(databaseDir, 'hermes.db');
     const db = DatabaseManager.getInstance(databasePath);
     db.initialize();
 
