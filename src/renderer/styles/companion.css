@@ -280,7 +280,7 @@ body {
 
 .state-observing {
   --state-color: var(--state-observing);
-  --state-opacity: 0.15;
+  --state-opacity: 0.5;
 }
 
 .state-hint {
@@ -307,7 +307,7 @@ body {
 }
 
 .companion-shell[data-state="observing"] .companion-orb {
-  opacity: 0.15 !important;
+  opacity: 0.5 !important;
   animation: none !important;
   transform: scale(0.94);
   filter: saturate(0.86);
