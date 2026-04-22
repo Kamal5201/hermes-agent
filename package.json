@@ -26,6 +26,7 @@
       "src/renderer/**",
       "src/ui/**",
       "src/preload/**",
+      "src/database/**",
       "package.json"
     ],
     "asarUnpack": [
