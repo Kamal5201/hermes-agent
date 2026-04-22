@@ -822,6 +822,19 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
     this.displayChatMessage(message, 'user');
   }
 
+  // ─── Public API for ControlServer / SelfTestEngine ──────────────────────
+
+  /** 返回当前状态字符串（供 SelfTestEngine 使用） */
+  public getCurrentState(): string {
+    return this.services?.state?.getCurrentState() ?? 'UNKNOWN';
+  }
+
+  /** 强制切换状态（供 SelfTestEngine 使用） */
+  public forceState(state: string): void {
+    if (!this.services?.state) return;
+    this.services.state.forceTransition(state as CompanionState, 'self-test');
+  }
+
   private getCurrentStatePayload(): {
     state: string;
     previousState?: string;

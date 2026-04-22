@@ -6,6 +6,7 @@ import {
 } from 'node:http';
 
 import { getLogger } from './logger';
+import { SelfTestEngine, type SelfTestReport } from './SelfTestEngine';
 
 export interface ControlInboxMessage {
   type: string;
@@ -16,6 +17,14 @@ export interface ControlInboxMessage {
 export interface ControlServerApp {
   popInbox(): ControlInboxMessage[];
   handleControlCommand(action: string, params?: Record<string, unknown>): Promise<unknown>;
+  getCurrentState(): string;
+  forceState(state: string): void;
+  moveWindow(x: number, y: number): void;
+  clickAt(x: number, y: number): Promise<void>;
+  typeText(text: string): Promise<void>;
+  takeScreenshot(): Promise<string | null>;
+  displayMessage(text: string, speaker?: string): void;
+  speak(text: string): void;
 }
 
 type CommandRequest = {
@@ -26,6 +35,7 @@ type CommandRequest = {
 export class ControlServer {
   private readonly logger = getLogger('ControlServer');
   private server: Server | null = null;
+  private selfTestEngine: SelfTestEngine | null = null;
 
   constructor(
     private readonly app: ControlServerApp,
@@ -110,6 +120,12 @@ export class ControlServer {
           return;
         }
 
+        // run_self_test：连接即自动运行完整测试套件
+        if (action === 'run_self_test') {
+          await this.runSelfTest(res);
+          return;
+        }
+
         const params = this.isRecord(payload.params) ? payload.params : {};
         try {
           const result = await this.app.handleControlCommand(action, params);
@@ -188,6 +204,40 @@ export class ControlServer {
       'Cache-Control': 'no-store',
     });
     res.end(JSON.stringify(payload));
+  }
+
+  /**
+   * 运行完整自测试套件
+   * Hermes Agent 连接后发送 {action: "run_self_test"} 触发
+   */
+  private async runSelfTest(res: ServerResponse): Promise<void> {
+    if (!this.selfTestEngine) {
+      this.selfTestEngine = new SelfTestEngine(this.app);
+    }
+
+    this.logger.info('[SelfTestEngine] Starting full self-test suite...');
+    this.app.displayMessage('🔬 Hermes 自检中...', 'hermes');
+    this.app.speak('开始自检，请稍候');
+
+    const report: SelfTestReport = await this.selfTestEngine.runFullSuite();
+
+    this.logger.info(
+      `[SelfTestEngine] Self-test complete: ${report.passed}/${report.totalTests} passed, overall=${report.overall}`
+    );
+
+    // 根据测试结果告知 Hermes
+    if (report.overall === 'pass') {
+      this.app.displayMessage('✅ 自检通过，所有功能正常', 'hermes');
+      this.app.speak('自检通过，系统运行正常');
+    } else if (report.overall === 'fail') {
+      this.app.displayMessage(`❌ 自检失败，发现 ${report.criticalBugs.length} 个关键问题`, 'hermes');
+      this.app.speak('自检失败，发现关键问题，需要修复');
+    } else {
+      this.app.displayMessage(`⚠️ 自检部分通过，${report.failed.length} 项待改进`, 'hermes');
+      this.app.speak('自检部分通过，部分功能待改进');
+    }
+
+    this.writeJson(res, 200, { ok: true, action: 'run_self_test', result: report });
   }
 
   private writeText(res: ServerResponse, statusCode: number, body: string): void {
