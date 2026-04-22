@@ -1,0 +1,69 @@
+{
+  "name": "hermes-companion",
+  "version": "1.0.0",
+  "description": "AI Companion System - 比你更懂你",
+  "main": "dist/main/index.js",
+  "author": "Hermes",
+  "homepage": "https://github.com/hermes-agent",
+  "scripts": {
+    "dev": "electron .",
+    "build": "tsc && electron-builder",
+    "build:win": "tsc && electron-builder --win",
+    "build:mac": "tsc && electron-builder --mac",
+    "lint": "eslint src --ext .ts",
+    "test": "jest"
+  },
+  "build": {
+    "appId": "com.hermes.companion",
+    "productName": "Hermes Companion",
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "assets/icon.png"
+    }
+  },
+  "dependencies": {
+    "@computer-use/nut-js": "^4.2.0",
+    "@electron-toolkit/preload": "^3.0.2",
+    "@electron-toolkit/utils": "^4.0.0",
+    "better-sqlite3": "^12.6.2",
+    "dotenv": "^17.3.1",
+    "electron-log": "^5.2.0",
+    "electron-updater": "^6.3.9",
+    "node-pty": "^1.1.0",
+    "node-screenshots": "^0.2.8",
+    "sharp": "^0.34.5",
+    "ws": "^8.18.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.12",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

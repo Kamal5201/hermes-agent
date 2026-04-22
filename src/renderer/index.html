@@ -1,0 +1,974 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hermes Companion</title>
+    <link rel="stylesheet" href="./styles/companion.css" />
+  </head>
+  <body>
+    <main
+      id="companion-shell"
+      class="companion-shell"
+      data-state="stealth"
+      data-previous-state="stealth"
+      data-transition="steady"
+    >
+      <div class="companion-caption">Hermes Companion</div>
+      <button
+        id="learning-entry"
+        class="companion-entry-pill"
+        type="button"
+        aria-controls="companion-learning"
+        aria-expanded="false"
+      >
+        学习进度
+      </button>
+
+      <div id="companion-learning" class="companion-learning" aria-hidden="true">
+        <div class="companion-learning-header">
+          <div class="companion-learning-icon">
+            <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" /></svg>
+          </div>
+          <span class="companion-learning-title">学习报告</span>
+          <span id="learning-day-badge" class="companion-learning-day">第 1 天</span>
+        </div>
+        <div class="companion-learning-stats">
+          <div class="companion-learning-stat">
+            <span id="stat-patterns" class="companion-learning-stat-value">0</span>
+            <span class="companion-learning-stat-label">发现模式</span>
+          </div>
+          <div class="companion-learning-stat">
+            <span id="stat-habits" class="companion-learning-stat-value">0</span>
+            <span class="companion-learning-stat-label">习惯</span>
+          </div>
+          <div class="companion-learning-stat">
+            <span id="stat-focus" class="companion-learning-stat-value">--</span>
+            <span class="companion-learning-stat-label">专注度</span>
+          </div>
+          <div class="companion-learning-stat">
+            <span id="stat-predictions" class="companion-learning-stat-value">0</span>
+            <span class="companion-learning-stat-label">反馈</span>
+          </div>
+        </div>
+        <div id="learning-summary" class="companion-learning-summary">等待首轮学习采样</div>
+      </div>
+
+      <div id="companion-health" class="companion-health" aria-hidden="true">
+        <div class="companion-health-header">
+          <span class="companion-health-title">系统健康</span>
+          <div id="health-badge" class="companion-health-badge healthy">
+            <span class="companion-health-dot"></span>
+            <span id="health-status-text">正常</span>
+          </div>
+        </div>
+        <div id="health-updated" class="companion-health-updated">等待采样</div>
+        <div class="companion-health-metrics">
+          <div class="companion-health-metric">
+            <span class="companion-health-metric-label">内存</span>
+            <div class="companion-health-metric-bar">
+              <div class="companion-health-metric-track">
+                <div id="memory-bar" class="companion-health-metric-fill low" style="width: 18%"></div>
+              </div>
+              <span id="memory-value" class="companion-health-metric-value">18%</span>
+            </div>
+          </div>
+          <div class="companion-health-metric">
+            <span class="companion-health-metric-label">负载</span>
+            <div class="companion-health-metric-bar">
+              <div class="companion-health-metric-track">
+                <div id="cpu-bar" class="companion-health-metric-fill low" style="width: 12%"></div>
+              </div>
+              <span id="cpu-value" class="companion-health-metric-value">12%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div
+        id="companion-hint-bubble"
+        class="companion-hint-bubble"
+        data-tone="hint"
+        role="alert"
+        aria-live="assertive"
+        aria-hidden="true"
+      >
+        <div class="companion-hint-bubble-header">
+          <span class="companion-hint-icon" aria-hidden="true"></span>
+          <span>轻提示</span>
+        </div>
+        <span id="hint-text"></span>
+        <div class="companion-hint-bubble-action">
+          <button id="hint-accept" class="companion-hint-btn accept" type="button">接受</button>
+          <button id="hint-dismiss" class="companion-hint-btn dismiss" type="button">忽略</button>
+        </div>
+      </div>
+
+      <section id="companion-anchor" class="companion-anchor" data-state="stealth">
+        <div id="companion-bubble" class="companion-bubble state-stealth" aria-live="polite"></div>
+        <div id="companion-orb" class="companion-orb state-stealth" role="presentation"></div>
+      </section>
+    </main>
+
+    <script type="module">
+      const HEALTH_POLL_INTERVAL_MS = 15_000;
+      const LEARNING_POLL_INTERVAL_MS = 30_000;
+      const HEARTBEAT_INTERVAL_MS = 1_000;
+      const PANEL_AUTO_HIDE_MS = 4_500;
+      const TRANSITION_RESET_MS = 360;
+      const LEARNING_ATTENTION_MS = 10_000;
+      const DEFAULT_HINT_TEXT = '检测到重复动作，需要我替你接下一步吗？';
+
+      const shellElement = document.getElementById('companion-shell');
+      const anchorElement = document.getElementById('companion-anchor');
+      const orbElement = document.getElementById('companion-orb');
+      const bubbleElement = document.getElementById('companion-bubble');
+      const healthElement = document.getElementById('companion-health');
+      const healthBadgeElement = document.getElementById('health-badge');
+      const healthStatusTextElement = document.getElementById('health-status-text');
+      const healthUpdatedElement = document.getElementById('health-updated');
+      const memoryBarElement = document.getElementById('memory-bar');
+      const memoryValueElement = document.getElementById('memory-value');
+      const loadBarElement = document.getElementById('cpu-bar');
+      const loadValueElement = document.getElementById('cpu-value');
+      const learningElement = document.getElementById('companion-learning');
+      const learningEntryButton = document.getElementById('learning-entry');
+      const learningDayElement = document.getElementById('learning-day-badge');
+      const learningSummaryElement = document.getElementById('learning-summary');
+      const patternsElement = document.getElementById('stat-patterns');
+      const habitsElement = document.getElementById('stat-habits');
+      const focusElement = document.getElementById('stat-focus');
+      const predictionsElement = document.getElementById('stat-predictions');
+
+      const defaultBubbleMessages = {
+        stealth: '',
+        observing: '',
+        hint: '',
+        active: 'Hermes 已进入主动协作状态。',
+        retreating: '先退到旁边，有需要随时叫我。',
+      };
+
+      const defaultStateVariables = {
+        stealth: {
+          '--state-color': 'transparent',
+          '--state-opacity': '0',
+        },
+        observing: {
+          '--state-color': 'rgba(74, 144, 217, 0.3)',
+          '--state-opacity': '0.15',
+        },
+        hint: {
+          '--state-color': 'rgba(255, 215, 0, 0.6)',
+          '--state-opacity': '0.6',
+        },
+        active: {
+          '--state-color': 'rgba(255, 107, 53, 0.8)',
+          '--state-opacity': '0.8',
+        },
+        retreating: {
+          '--state-color': 'rgba(255, 107, 53, 0.4)',
+          '--state-opacity': '0.35',
+        },
+      };
+
+      const healthStatusLabels = {
+        healthy: '正常',
+        degraded: '轻负载',
+        critical: '需关注',
+      };
+
+      let currentState = 'stealth';
+      let transitionResetTimer = 0;
+      let learningAutoHideTimer = 0;
+      let learningAttentionTimer = 0;
+      let learningPinned = false;
+      let learningVisibleUntil = 0;
+      let healthVisibleUntil = 0;
+      let latestHealth = null;
+      let latestLearningSnapshot = null;
+      let schedulerLagAverageMs = 0;
+      let lastSchedulerBeat = performance.now();
+      let healthPollInFlight = false;
+      let learningPollInFlight = false;
+      let activeHintContext = null;
+      let lastHintText = '';
+
+      function clamp(value, min = 0, max = 1) {
+        return Math.min(max, Math.max(min, value));
+      }
+
+      function normalizeState(payload) {
+        if (!payload) {
+          return 'stealth';
+        }
+
+        if (typeof payload === 'string') {
+          return payload.toLowerCase();
+        }
+
+        if (typeof payload.state === 'string') {
+          return payload.state.toLowerCase();
+        }
+
+        if (payload.ui && typeof payload.ui.state === 'string') {
+          return payload.ui.state.toLowerCase();
+        }
+
+        return 'stealth';
+      }
+
+      function normalizePreviousState(payload) {
+        if (!payload || typeof payload !== 'object') {
+          return currentState;
+        }
+
+        if (typeof payload.previousState === 'string') {
+          return payload.previousState.toLowerCase();
+        }
+
+        return currentState;
+      }
+
+      function isRecord(value) {
+        return Boolean(value) && typeof value === 'object';
+      }
+
+      function applyCssVariables(target, variables) {
+        if (!target || !isRecord(variables)) {
+          return;
+        }
+
+        Object.entries(variables).forEach(([key, value]) => {
+          if (typeof value === 'string' || typeof value === 'number') {
+            target.style.setProperty(key, String(value));
+          }
+        });
+      }
+
+      function setPanelVisible(element, visible) {
+        if (!element) {
+          return;
+        }
+
+        element.classList.toggle('visible', visible);
+        element.setAttribute('aria-hidden', String(!visible));
+      }
+
+      function describeAge(timestamp) {
+        const deltaMs = Date.now() - timestamp;
+
+        if (deltaMs < 5_000) {
+          return '刚刚更新';
+        }
+
+        if (deltaMs < 60_000) {
+          return `${Math.round(deltaMs / 1_000)} 秒前`;
+        }
+
+        return `${Math.round(deltaMs / 60_000)} 分钟前`;
+      }
+
+      function formatPercent(ratio) {
+        return `${Math.round(clamp(ratio) * 100)}%`;
+      }
+
+      function getMetricLevel(ratio) {
+        if (ratio >= 0.85) {
+          return 'high';
+        }
+
+        if (ratio >= 0.55) {
+          return 'medium';
+        }
+
+        return 'low';
+      }
+
+      function setMetric(barElement, valueElement, ratio) {
+        if (!barElement || !valueElement) {
+          return;
+        }
+
+        const level = getMetricLevel(ratio);
+        barElement.className = `companion-health-metric-fill ${level}`;
+        barElement.style.width = formatPercent(ratio);
+        valueElement.textContent = formatPercent(ratio);
+      }
+
+      function openLearningPanel(options = {}) {
+        const { pin = false, durationMs = PANEL_AUTO_HIDE_MS } = options;
+
+        learningPinned = pin || learningPinned;
+        learningVisibleUntil = durationMs > 0 ? Date.now() + durationMs : Number.POSITIVE_INFINITY;
+
+        if (learningAutoHideTimer) {
+          clearTimeout(learningAutoHideTimer);
+          learningAutoHideTimer = 0;
+        }
+
+        if (!learningPinned && Number.isFinite(learningVisibleUntil)) {
+          learningAutoHideTimer = window.setTimeout(() => {
+            learningVisibleUntil = 0;
+            syncPanels();
+          }, durationMs);
+        }
+
+        if (learningEntryButton) {
+          learningEntryButton.classList.remove('attention');
+          learningEntryButton.setAttribute('aria-expanded', 'true');
+        }
+
+        syncPanels();
+      }
+
+      function closeLearningPanel() {
+        learningPinned = false;
+        learningVisibleUntil = 0;
+
+        if (learningAutoHideTimer) {
+          clearTimeout(learningAutoHideTimer);
+          learningAutoHideTimer = 0;
+        }
+
+        if (learningEntryButton) {
+          learningEntryButton.setAttribute('aria-expanded', 'false');
+        }
+
+        syncPanels();
+      }
+
+      function flagLearningEntry() {
+        if (!learningEntryButton) {
+          return;
+        }
+
+        learningEntryButton.classList.add('attention');
+
+        if (learningAttentionTimer) {
+          clearTimeout(learningAttentionTimer);
+        }
+
+        learningAttentionTimer = window.setTimeout(() => {
+          learningEntryButton.classList.remove('attention');
+        }, LEARNING_ATTENTION_MS);
+      }
+
+      function revealHealthPanel(durationMs = PANEL_AUTO_HIDE_MS) {
+        healthVisibleUntil = Date.now() + durationMs;
+        syncPanels();
+      }
+
+      function syncPanels() {
+        const now = Date.now();
+        const canShowPanels = currentState !== 'stealth';
+        const learningVisible = canShowPanels && (learningPinned || now < learningVisibleUntil);
+        const healthVisible = canShowPanels && Boolean(
+          (latestHealth && latestHealth.overall !== 'healthy')
+            || currentState === 'active'
+            || currentState === 'hint'
+            || now < healthVisibleUntil
+        );
+
+        setPanelVisible(learningElement, learningVisible);
+        setPanelVisible(healthElement, healthVisible);
+
+        if (learningEntryButton && !learningVisible) {
+          learningEntryButton.setAttribute('aria-expanded', 'false');
+        }
+      }
+
+      function applyTransitionHooks(previousState, nextState) {
+        if (!shellElement || !anchorElement) {
+          return;
+        }
+
+        const transition = previousState === nextState ? 'steady' : `${previousState}-to-${nextState}`;
+
+        shellElement.dataset.previousState = previousState;
+        shellElement.dataset.state = nextState;
+        shellElement.dataset.transition = transition;
+        anchorElement.dataset.state = nextState;
+        anchorElement.dataset.transition = transition;
+        shellElement.classList.add('is-transitioning');
+
+        if (transitionResetTimer) {
+          clearTimeout(transitionResetTimer);
+        }
+
+        transitionResetTimer = window.setTimeout(() => {
+          shellElement.classList.remove('is-transitioning');
+          shellElement.dataset.transition = 'steady';
+          anchorElement.dataset.transition = 'steady';
+        }, TRANSITION_RESET_MS);
+      }
+
+      function updateLearningUI(snapshot) {
+        latestLearningSnapshot = snapshot;
+
+        if (learningDayElement) {
+          learningDayElement.textContent = `第 ${snapshot.learningDay} 天`;
+        }
+
+        if (patternsElement) {
+          patternsElement.textContent = String(snapshot.patternsDiscovered);
+        }
+
+        if (habitsElement) {
+          habitsElement.textContent = String(snapshot.habitsFormed);
+        }
+
+        if (focusElement) {
+          focusElement.textContent = snapshot.focusScore === null
+            ? '--'
+            : `${Math.round(snapshot.focusScore * 100)}%`;
+        }
+
+        if (predictionsElement) {
+          predictionsElement.textContent = String(snapshot.feedbackCount);
+        }
+
+        if (learningSummaryElement) {
+          const focusText = snapshot.focusScore === null
+            ? '继续建立注意力画像'
+            : `专注均值 ${Math.round(snapshot.focusScore * 100)}%`;
+          learningSummaryElement.textContent = `${snapshot.patternsDiscovered} 个模式，${snapshot.habitsFormed} 个习惯，${focusText}`;
+        }
+      }
+
+      function toLearningSnapshot(profile, patterns) {
+        const timePatterns = Array.isArray(patterns?.timePatterns) ? patterns.timePatterns : [];
+        const operationPatterns = Array.isArray(patterns?.operationPatterns) ? patterns.operationPatterns : [];
+        const habits = Array.isArray(patterns?.habits) ? patterns.habits : [];
+        const focusScore = typeof profile?.attentionModel?.avgFocusScore === 'number'
+          ? clamp(profile.attentionModel.avgFocusScore)
+          : null;
+
+        return {
+          learningDay: Number(profile?.learningDay ?? 1) || 1,
+          patternsDiscovered: timePatterns.length + operationPatterns.length,
+          habitsFormed: habits.length,
+          focusScore,
+          feedbackCount: Number(profile?.feedbackCount ?? 0) || 0,
+        };
+      }
+
+      function didLearningSnapshotChange(nextSnapshot) {
+        if (!latestLearningSnapshot) {
+          return true;
+        }
+
+        return [
+          latestLearningSnapshot.learningDay !== nextSnapshot.learningDay,
+          latestLearningSnapshot.patternsDiscovered !== nextSnapshot.patternsDiscovered,
+          latestLearningSnapshot.habitsFormed !== nextSnapshot.habitsFormed,
+          latestLearningSnapshot.focusScore !== nextSnapshot.focusScore,
+          latestLearningSnapshot.feedbackCount !== nextSnapshot.feedbackCount,
+        ].some(Boolean);
+      }
+
+      function readMemoryRatio() {
+        const memory = performance.memory;
+
+        if (!memory || !memory.jsHeapSizeLimit) {
+          return null;
+        }
+
+        return clamp(memory.usedJSHeapSize / memory.jsHeapSizeLimit);
+      }
+
+      function classifyHealth(memoryRatio, loadRatio, bridgeFailed) {
+        if (bridgeFailed || memoryRatio >= 0.9 || loadRatio >= 0.85) {
+          return 'critical';
+        }
+
+        if (memoryRatio >= 0.7 || loadRatio >= 0.6) {
+          return 'degraded';
+        }
+
+        return 'healthy';
+      }
+
+      async function measureBridgeLatency() {
+        if (!window.hermes?.state?.getCurrent) {
+          return { latencyMs: 0, failed: false };
+        }
+
+        const startedAt = performance.now();
+
+        try {
+          await window.hermes.state.getCurrent();
+          return {
+            latencyMs: performance.now() - startedAt,
+            failed: false,
+          };
+        } catch (error) {
+          console.warn('[Hermes Renderer] state bridge latency probe failed', error);
+          return {
+            latencyMs: performance.now() - startedAt,
+            failed: true,
+          };
+        }
+      }
+
+      function updateHealthUI(health) {
+        latestHealth = health;
+
+        if (healthBadgeElement) {
+          healthBadgeElement.className = `companion-health-badge ${health.overall}`;
+        }
+
+        if (healthStatusTextElement) {
+          healthStatusTextElement.textContent = healthStatusLabels[health.overall];
+        }
+
+        if (healthUpdatedElement) {
+          const bridgeText = health.bridgeFailed
+            ? '状态桥接异常'
+            : `桥接 ${Math.round(health.bridgeLatencyMs)}ms`;
+          healthUpdatedElement.textContent = `${bridgeText} · ${describeAge(health.updatedAt)}`;
+        }
+
+        setMetric(memoryBarElement, memoryValueElement, health.memoryRatio);
+        setMetric(loadBarElement, loadValueElement, health.loadRatio);
+        syncPanels();
+      }
+
+      async function pollHealthStatus(forceVisible = false) {
+        if (healthPollInFlight) {
+          return;
+        }
+
+        healthPollInFlight = true;
+
+        try {
+          const bridge = await measureBridgeLatency();
+          const measuredMemoryRatio = readMemoryRatio();
+          const loadRatio = Math.max(
+            clamp(schedulerLagAverageMs / 140),
+            clamp(bridge.latencyMs / 220),
+          );
+          const memoryRatio = measuredMemoryRatio ?? clamp(0.18 + loadRatio * 0.16, 0.12, 0.72);
+
+          updateHealthUI({
+            overall: classifyHealth(memoryRatio, loadRatio, bridge.failed),
+            memoryRatio,
+            loadRatio,
+            bridgeLatencyMs: bridge.latencyMs,
+            bridgeFailed: bridge.failed,
+            updatedAt: Date.now(),
+          });
+
+          if (forceVisible) {
+            revealHealthPanel();
+          }
+        } finally {
+          healthPollInFlight = false;
+        }
+      }
+
+      async function pollLearningProgress(options = {}) {
+        const { reveal = false, pin = false } = options;
+
+        if (learningPollInFlight || !window.hermes?.learning) {
+          return;
+        }
+
+        learningPollInFlight = true;
+
+        try {
+          const [profile, patterns] = await Promise.all([
+            window.hermes.learning.getProfile(),
+            window.hermes.learning.getPatterns(),
+          ]);
+
+          const hadPreviousSnapshot = Boolean(latestLearningSnapshot);
+          const nextSnapshot = toLearningSnapshot(profile, patterns);
+          const changed = didLearningSnapshotChange(nextSnapshot);
+
+          updateLearningUI(nextSnapshot);
+
+          if (changed && hadPreviousSnapshot) {
+            flagLearningEntry();
+          } else if (reveal || pin) {
+            openLearningPanel({ pin, durationMs: PANEL_AUTO_HIDE_MS });
+          }
+
+          if (changed && (reveal || pin || hadPreviousSnapshot)) {
+            openLearningPanel({ pin, durationMs: PANEL_AUTO_HIDE_MS });
+          }
+        } catch (error) {
+          console.warn('[Hermes Renderer] learning progress poll failed', error);
+        } finally {
+          learningPollInFlight = false;
+        }
+      }
+
+      function createInlineHintBubble() {
+        const bubble = document.getElementById('companion-hint-bubble');
+        const text = document.getElementById('hint-text');
+        const acceptButton = document.getElementById('hint-accept');
+        const dismissButton = document.getElementById('hint-dismiss');
+        let hideTimeout = 0;
+        let cleanup = [];
+
+        return {
+          show(config) {
+            if (!bubble || !text) {
+              return;
+            }
+
+            if (hideTimeout) {
+              clearTimeout(hideTimeout);
+              hideTimeout = 0;
+            }
+
+            cleanup.forEach((dispose) => dispose());
+            cleanup = [];
+
+            bubble.dataset.tone = config.tone ?? 'hint';
+            bubble.classList.add('visible');
+            bubble.setAttribute('aria-hidden', 'false');
+            text.textContent = config.text;
+
+            if (acceptButton instanceof HTMLButtonElement) {
+              if (config.action) {
+                acceptButton.hidden = false;
+                acceptButton.textContent = config.action.label;
+                const handler = () => {
+                  void Promise.resolve(config.action.callback()).finally(() => {
+                    bubble.classList.remove('visible');
+                    bubble.setAttribute('aria-hidden', 'true');
+                  });
+                };
+                acceptButton.addEventListener('click', handler);
+                cleanup.push(() => acceptButton.removeEventListener('click', handler));
+              } else {
+                acceptButton.hidden = true;
+              }
+            }
+
+            if (dismissButton instanceof HTMLButtonElement) {
+              dismissButton.textContent = config.dismissLabel ?? '忽略';
+              dismissButton.hidden = false;
+              const handler = () => {
+                void Promise.resolve(config.onDismiss?.()).finally(() => {
+                  bubble.classList.remove('visible');
+                  bubble.setAttribute('aria-hidden', 'true');
+                });
+              };
+              dismissButton.addEventListener('click', handler);
+              cleanup.push(() => dismissButton.removeEventListener('click', handler));
+            }
+
+            if (!config.persistent) {
+              hideTimeout = window.setTimeout(() => {
+                bubble.classList.remove('visible');
+                bubble.setAttribute('aria-hidden', 'true');
+              }, config.duration ?? 3_000);
+            }
+          },
+          hide() {
+            if (!bubble) {
+              return;
+            }
+
+            if (hideTimeout) {
+              clearTimeout(hideTimeout);
+              hideTimeout = 0;
+            }
+
+            cleanup.forEach((dispose) => dispose());
+            cleanup = [];
+            bubble.classList.remove('visible');
+            bubble.setAttribute('aria-hidden', 'true');
+          },
+          updateText(textValue) {
+            if (text) {
+              text.textContent = textValue;
+            }
+          },
+          isVisible() {
+            return bubble?.classList.contains('visible') ?? false;
+          },
+        };
+      }
+
+      async function loadHintBubble() {
+        const candidates = [
+          './components/HintBubble.js',
+          '../../dist/renderer/components/HintBubble.js',
+        ];
+
+        for (const candidate of candidates) {
+          try {
+            const module = await import(candidate);
+            const HintBubble = module.HintBubble ?? module.default;
+
+            if (typeof HintBubble === 'function') {
+              return new HintBubble();
+            }
+          } catch (_error) {
+            // Try the next candidate.
+          }
+        }
+
+        return createInlineHintBubble();
+      }
+
+      function buildHintConfig(text, options = {}) {
+        return {
+          text,
+          duration: options.duration ?? 4_000,
+          dismissLabel: options.dismissLabel ?? '忽略',
+          persistent: Boolean(options.persistent),
+          tone: options.tone ?? 'hint',
+          action: {
+            label: options.acceptLabel ?? '接受',
+            callback: async () => {
+              await resolveHint(true);
+            },
+          },
+          onDismiss: async () => {
+            await resolveHint(false);
+          },
+        };
+      }
+
+      let hintBubble = null;
+
+      async function resolveHint(accepted) {
+        const predictionId = activeHintContext?.predictionId;
+
+        if (predictionId && window.hermes?.learning?.setFeedback) {
+          try {
+            await window.hermes.learning.setFeedback(predictionId, accepted);
+          } catch (error) {
+            console.warn('[Hermes Renderer] hint feedback failed', error);
+          }
+        }
+
+        activeHintContext = null;
+        lastHintText = '';
+
+        if (accepted) {
+          render({
+            state: 'active',
+            previousState: currentState,
+            ui: {
+              bubbleText: '已记录你的确认，Hermes 正切入协作。',
+            },
+          });
+          revealHealthPanel();
+        } else if (currentState === 'hint') {
+          render({
+            state: 'observing',
+            previousState: 'hint',
+          });
+        }
+      }
+
+      function presentHint(text, options = {}) {
+        if (!hintBubble) {
+          return;
+        }
+
+        const hintText = text || DEFAULT_HINT_TEXT;
+
+        activeHintContext = {
+          predictionId: typeof options.predictionId === 'string' ? options.predictionId : null,
+        };
+        lastHintText = hintText;
+
+        hintBubble.show(buildHintConfig(hintText, options));
+      }
+
+      function render(payload) {
+        const nextState = normalizeState(payload);
+        const previousState = normalizePreviousState(payload);
+        const ui = isRecord(payload) && isRecord(payload.ui) ? payload.ui : {};
+        const shellVariables = {
+          ...(defaultStateVariables[nextState] ?? defaultStateVariables.stealth),
+          ...(isRecord(ui.cssVariables) ? ui.cssVariables : {}),
+        };
+        const bubbleText = typeof ui.bubbleText === 'string'
+          ? ui.bubbleText
+          : defaultBubbleMessages[nextState] ?? '';
+        const orbClassName = typeof ui.orbClassName === 'string'
+          ? ui.orbClassName
+          : `companion-orb state-${nextState}`;
+        const bubbleClassName = typeof ui.bubbleClassName === 'string'
+          ? ui.bubbleClassName.replace(/\bvisible\b/g, '').trim()
+          : `companion-bubble state-${nextState}`;
+        const isHintState = nextState === 'hint';
+        const shouldShowBubble = !isHintState
+          && Boolean(bubbleText)
+          && nextState !== 'stealth'
+          && nextState !== 'observing';
+
+        currentState = nextState;
+
+        if (shellElement) {
+          applyCssVariables(shellElement, shellVariables);
+        }
+
+        if (orbElement) {
+          orbElement.className = orbClassName;
+          applyCssVariables(orbElement, shellVariables);
+        }
+
+        if (bubbleElement) {
+          bubbleElement.className = bubbleClassName || `companion-bubble state-${nextState}`;
+          bubbleElement.textContent = shouldShowBubble ? bubbleText : '';
+          bubbleElement.classList.toggle('visible', shouldShowBubble);
+          applyCssVariables(bubbleElement, shellVariables);
+        }
+
+        applyTransitionHooks(previousState, nextState);
+
+        if (isHintState) {
+          const hintText = typeof ui.bubbleText === 'string' && ui.bubbleText.trim()
+            ? ui.bubbleText
+            : DEFAULT_HINT_TEXT;
+
+          if (hintText !== lastHintText || !hintBubble?.isVisible?.()) {
+            presentHint(hintText, {
+              duration: 5_000,
+              tone: 'hint',
+            });
+          }
+        } else if (hintBubble?.isVisible?.()) {
+          hintBubble.hide();
+          activeHintContext = null;
+          lastHintText = '';
+        }
+
+        syncPanels();
+      }
+
+      function startHeartbeat() {
+        window.setInterval(() => {
+          const now = performance.now();
+          const lag = Math.max(0, now - lastSchedulerBeat - HEARTBEAT_INTERVAL_MS);
+          schedulerLagAverageMs = schedulerLagAverageMs === 0
+            ? lag
+            : (schedulerLagAverageMs * 0.75) + (lag * 0.25);
+          lastSchedulerBeat = now;
+        }, HEARTBEAT_INTERVAL_MS);
+      }
+
+      function wireLearningEntry() {
+        if (!(learningEntryButton instanceof HTMLButtonElement)) {
+          return;
+        }
+
+        learningEntryButton.addEventListener('click', () => {
+          if (learningPinned) {
+            closeLearningPanel();
+            return;
+          }
+
+          learningPinned = true;
+          openLearningPanel({ pin: true, durationMs: PANEL_AUTO_HIDE_MS });
+          learningEntryButton.setAttribute('aria-expanded', 'true');
+          void pollLearningProgress({ reveal: true, pin: true });
+        });
+      }
+
+      function wireMcpMessages() {
+        if (!window.hermes?.mcp?.onMessage) {
+          return;
+        }
+
+        window.hermes.mcp.onMessage((message) => {
+          if (!message || message.type !== 'notification') {
+            return;
+          }
+
+          if (message.method === 'ui.hint' && isRecord(message.params)) {
+            const text = typeof message.params.text === 'string'
+              ? message.params.text
+              : DEFAULT_HINT_TEXT;
+
+            render({
+              state: 'hint',
+              previousState: currentState,
+              ui: {
+                orbClassName: 'companion-orb state-hint',
+                cssVariables: {
+                  '--state-color': 'rgba(255, 215, 0, 0.6)',
+                  '--state-opacity': '0.6',
+                },
+              },
+            });
+
+            presentHint(text, {
+              acceptLabel: typeof message.params.acceptLabel === 'string' ? message.params.acceptLabel : '接受',
+              dismissLabel: typeof message.params.dismissLabel === 'string' ? message.params.dismissLabel : '忽略',
+              duration: typeof message.params.duration === 'number' ? message.params.duration : 5_000,
+              predictionId: typeof message.params.predictionId === 'string' ? message.params.predictionId : null,
+            });
+
+            revealHealthPanel();
+            return;
+          }
+
+          if (message.method === 'ui.learning.report' || message.method === 'ui.learning.refresh') {
+            void pollLearningProgress({ reveal: true });
+          }
+
+          if (message.method === 'ui.health.refresh') {
+            void pollHealthStatus(true);
+          }
+        });
+      }
+
+      async function bootstrap() {
+        hintBubble = await loadHintBubble();
+        wireLearningEntry();
+        wireMcpMessages();
+        startHeartbeat();
+
+        void pollHealthStatus(true);
+
+        if (!window.hermes) {
+          render({ state: 'observing' });
+          return;
+        }
+
+        try {
+          const currentPayload = await window.hermes.state.getCurrent();
+          render(currentPayload);
+        } catch (error) {
+          console.warn('[Hermes Renderer] failed to fetch initial state', error);
+          render({ state: 'observing' });
+        }
+
+        try {
+          await pollLearningProgress({ reveal: false });
+        } catch (error) {
+          console.warn('[Hermes Renderer] initial learning poll failed', error);
+        }
+
+        window.hermes.state.onStateChange((payload) => {
+          render(payload);
+
+          if (normalizeState(payload) === 'active') {
+            revealHealthPanel();
+          }
+        });
+
+        window.setInterval(() => {
+          void pollHealthStatus(false);
+        }, HEALTH_POLL_INTERVAL_MS);
+
+        window.setInterval(() => {
+          void pollLearningProgress({ reveal: false });
+        }, LEARNING_POLL_INTERVAL_MS);
+      }
+
+      bootstrap().catch((error) => {
+        console.error('[Hermes Renderer] bootstrap failed', error);
+      });
+    </script>
+  </body>
+</html>
