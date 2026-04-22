@@ -122,6 +122,12 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
   private lastLearningSyncAt = 0;
   private lastPredictionSyncAt = 0;
   private inbox: ControlInboxMessage[] = [];
+  /** 待处理的敏感操作确认（Promise resolve/reject） */
+  private pendingConfirmation: {
+    action: string;
+    params: Record<string, unknown>;
+    resolve: (confirmed: boolean) => void;
+  } | null = null;
 
   private constructor() {
     super();
@@ -1349,7 +1355,7 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
     const win = this.mainWindow;
     if (win && !win.isDestroyed()) {
       win.webContents.send('chat:message', {
-        text: `⚠️ 确认：${description}，是否继续？`,
+        text: `⚠️ 确认：${description}，回复"是"继续，"否"取消`,
         speaker: 'system',
       });
     }
@@ -1357,9 +1363,76 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
     // 语音朗读确认请求
     this.speak(`请确认：${description}，回复"是"继续，"否"取消`);
 
-    // TODO: 实现语音识别确认（等待用户语音回复）
-    // 暂时返回 false，需要手动确认
-    return false;
+    // 等待用户在下一次 inbox 消息里回复
+    return new Promise<boolean>((resolve) => {
+      this.pendingConfirmation = { action, params, resolve };
+
+      // 30 秒超时自动取消
+      setTimeout(() => {
+        if (this.pendingConfirmation?.resolve === resolve) {
+          this.pendingConfirmation = null;
+          resolve(false);
+        }
+      }, 30_000);
+    });
+  }
+
+  /**
+   * 处理来自收件箱的用户消息。
+   * 如果有待处理的敏感操作确认，分发到对应的 resolve；
+   * 否则作为普通聊天消息添加到 inbox。
+   */
+  public async handleIncomingUserMessage(text: string): Promise<void> {
+    if (!this.pendingConfirmation) {
+      // 没有待确认的敏感操作 → 普通聊天消息
+      this.addToInbox({ type: 'chat', text, timestamp: Date.now() });
+      const win = this.mainWindow;
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('chat:message', { text: `你: ${text}`, speaker: 'user' });
+      }
+      this.speak(`收到: ${text}`);
+      return;
+    }
+
+    // 有待确认的敏感操作
+    const lower = text.toLowerCase().trim();
+    const isConfirm = ['是', '确认', 'ok', 'yes', 'y', '好的', '好', '执行', '继续'].includes(lower);
+    const isReject = ['否', '不', 'no', 'n', '取消', '拒绝', '算了'].includes(lower);
+
+    if (isConfirm || isReject) {
+      const pending = this.pendingConfirmation;
+      this.pendingConfirmation = null;
+
+      const win = this.mainWindow;
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('chat:message', {
+          text: isConfirm ? '✅ 确认执行' : '❌ 已取消',
+          speaker: 'system',
+        });
+      }
+      this.speak(isConfirm ? '确认执行' : '已取消');
+
+      if (isConfirm) {
+        try {
+          await this.handleControlCommand(pending.action, { ...pending.params, confirmed: true });
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (win && !win.isDestroyed()) {
+            win.webContents.send('chat:message', { text: `执行失败: ${msg}`, speaker: 'system' });
+          }
+        }
+      }
+    } else {
+      // 用户说了别的话，提醒他
+      const win = this.mainWindow;
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('chat:message', {
+          text: '请回复"是"继续或"否"取消',
+          speaker: 'system',
+        });
+      }
+      this.speak('请回复是继续，否取消');
+    }
   }
 
   private requireString(params: Record<string, unknown>, key: string): string {

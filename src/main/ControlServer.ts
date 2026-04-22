@@ -17,6 +17,7 @@ export interface ControlInboxMessage {
 export interface ControlServerApp {
   popInbox(): ControlInboxMessage[];
   handleControlCommand(action: string, params?: Record<string, unknown>): Promise<unknown>;
+  handleIncomingUserMessage(text: string): Promise<void>;
   getCurrentState(): string;
   forceState(state: string): void;
   moveWindow(x: number, y: number): Promise<unknown>;
@@ -36,6 +37,7 @@ export class ControlServer {
   private readonly logger = getLogger('ControlServer');
   private server: Server | null = null;
   private selfTestEngine: SelfTestEngine | null = null;
+  private inboxPollInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private readonly app: ControlServerApp,
@@ -69,11 +71,27 @@ export class ControlServer {
 
     this.server = server;
     this.logger.info(`Control server listening on http://${this.host}:${this.port}`);
+
+    // 启动 500ms 收件箱轮询
+    this.startInboxPolling();
+
+    // 启动后 1 秒自动运行完整自检（不阻塞服务器启动）
+    setTimeout(() => {
+      this.runSelfTestNoResponse().catch((err: unknown) => {
+        this.logger.warn('[SelfTestEngine] Startup self-test error:', err instanceof Error ? err.message : String(err));
+      });
+    }, 1000);
   }
 
   public async stop(): Promise<void> {
     if (!this.server) {
       return;
+    }
+
+    // 停止收件箱轮询
+    if (this.inboxPollInterval) {
+      clearInterval(this.inboxPollInterval);
+      this.inboxPollInterval = null;
     }
 
     const server = this.server;
@@ -238,6 +256,58 @@ export class ControlServer {
     }
 
     this.writeJson(res, 200, { ok: true, action: 'run_self_test', result: report });
+  }
+
+  /**
+   * 启动 500ms 收件箱轮询
+   * 每次轮询检查用户消息，分发到 handleIncomingUserMessage
+   */
+  private startInboxPolling(): void {
+    const poll = async () => {
+      try {
+        const messages = this.app.popInbox();
+        for (const msg of messages) {
+          if (msg.type === 'chat' && msg.text) {
+            await this.app.handleIncomingUserMessage(msg.text);
+          }
+        }
+      } catch (err: unknown) {
+        this.logger.debug('[InboxPoll] error:', err instanceof Error ? err.message : String(err));
+      }
+    };
+
+    this.inboxPollInterval = setInterval(poll, 500);
+    this.logger.info('[ControlServer] Inbox polling started (500ms)');
+  }
+
+  /**
+   * 运行自检但不写 HTTP 响应（用于启动时自动触发）
+   */
+  private async runSelfTestNoResponse(): Promise<void> {
+    if (!this.selfTestEngine) {
+      this.selfTestEngine = new SelfTestEngine(this.app);
+    }
+
+    this.logger.info('[SelfTestEngine] Starting startup self-test...');
+    await this.app.displayMessage('🔬 Hermes 自检中...', 'hermes');
+    await this.app.speak('开始自检，请稍候');
+
+    const report: SelfTestReport = await this.selfTestEngine.runFullSuite();
+
+    this.logger.info(
+      `[SelfTestEngine] Self-test complete: ${report.passed}/${report.totalTests} passed, overall=${report.overall}`
+    );
+
+    if (report.overall === 'pass') {
+      await this.app.displayMessage('✅ 自检通过，所有功能正常', 'hermes');
+      await this.app.speak('自检通过，系统运行正常');
+    } else if (report.overall === 'fail') {
+      await this.app.displayMessage(`❌ 自检失败，发现 ${report.criticalBugs.length} 个关键问题`, 'hermes');
+      await this.app.speak('自检失败，发现关键问题，需要修复');
+    } else {
+      await this.app.displayMessage(`⚠️ 自检部分通过，${report.autoFixable.length} 项待改进`, 'hermes');
+      await this.app.speak('自检部分通过，部分功能待改进');
+    }
   }
 
   private writeText(res: ServerResponse, statusCode: number, body: string): void {

@@ -1040,13 +1040,30 @@
         const div = document.createElement('div');
         div.className = `spotlight-message ${type}`;
         if (type === 'hermes') {
-          div.innerHTML = `<span class="spotlight-message-dot">●</span><span class="spotlight-message-text">${escapeHtml(text)}</span>`;
+          div.innerHTML = `<span class="spotlight-message-dot">●</span><span class="spotlight-message-text"></span>`;
         } else {
           div.innerHTML = `<span class="spotlight-message-text">${escapeHtml(text)}</span>`;
         }
         spotlightMessages.appendChild(div);
         spotlightMessages.scrollTop = spotlightMessages.scrollHeight;
         resetSpotlightAutoClose();
+
+        // Typewriter effect for Hermes messages longer than 20 chars
+        if (type === 'hermes' && text.length > 20) {
+          const textSpan = div.querySelector('.spotlight-message-text');
+          if (textSpan) {
+            let i = 0;
+            const interval = setInterval(() => {
+              if (!textSpan) { clearInterval(interval); return; }
+              textSpan.textContent = text.slice(0, i + 1);
+              i++;
+              if (i >= text.length) {
+                clearInterval(interval);
+                spotlightMessages.scrollTop = spotlightMessages.scrollHeight;
+              }
+            }, 20); // 20ms per character
+          }
+        }
       }
 
       function escapeHtml(text) {

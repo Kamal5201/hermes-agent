@@ -872,6 +872,11 @@ body {
   height: 52px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   gap: 10px;
+  transition: transform 100ms ease;
+}
+
+.spotlight-overlay.visible .spotlight-search-bar {
+  transform: scale(1.01);
 }
 
 .spotlight-icon {
