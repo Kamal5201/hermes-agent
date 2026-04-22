@@ -351,6 +351,18 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
       this.requireGuiControlAuthorized();
     }
 
+    // 如果是敏感操作（删除、渗透、推送、发截图给第三方），需要用户语音确认
+    const isConfirmed = params.confirmed === true;
+    if (this.requiresVoiceConfirmation(action, params) && !isConfirmed) {
+      // 先问用户，拿到确认后再执行
+      const confirmed = await this.requestVoiceConfirmation(action, params);
+      if (!confirmed) {
+        const err = new Error('User rejected sensitive operation') as Error & { code?: string };
+        err.code = 'CONFIRMATION_REJECTED';
+        throw err;
+      }
+    }
+
     switch (action) {
       case 'getState':
         return this.getCurrentStatePayload();
@@ -1264,7 +1276,12 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
 
   /**
    * 无感授权检查（乔布斯哲学：ACTIVE 状态本身即授权）
-   * 图形控制命令（goto/click/type/screenshot）仅在 ACTIVE 状态下可执行
+   *
+   * 分层授权：
+   * - 图形控制命令（goto/click/type/screenshot）仅在 ACTIVE 状态下允许
+   * - 敏感操作（渗透、删除、改配置、发截图给第三方）需要用户语音确认
+   * - 日常操作（打开应用、浏览网页、移动窗口）直接执行
+   *
    * 用户切换到 ACTIVE = 授权开启；离开 ACTIVE = 授权自动收回
    */
   private requireGuiControlAuthorized(): void {
@@ -1274,6 +1291,62 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
       err.code = 'UNAUTHORIZED';
       throw err;
     }
+  }
+
+  /**
+   * 检查命令是否需要额外语音确认
+   * 敏感操作返回 true，需要先问用户
+   */
+  private requiresVoiceConfirmation(action: string, params: Record<string, unknown>): boolean {
+    const sensitivePatterns = [
+      'pentest', 'scan', 'exploit', '攻', '渗', '黑',
+      'delete', 'remove', 'destroy', 'drop', '删除',
+      'sudo', 'rm ', 'rmdir', 'format',
+      'push', 'commit --amend', 'force push',
+      'send_to_thirdparty', 'share_screen', 'broadcast',
+    ];
+
+    const actionLower = action.toLowerCase();
+    const paramStr = JSON.stringify(params).toLowerCase();
+
+    for (const pattern of sensitivePatterns) {
+      if (actionLower.includes(pattern) || paramStr.includes(pattern)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 处理需要语音确认的命令
+   * 显示确认提示并等待用户回复
+   */
+  private async requestVoiceConfirmation(action: string, params: Record<string, unknown>): Promise<boolean> {
+    const descriptions: Record<string, string> = {
+      'pentest': '执行渗透测试',
+      'delete': `删除目标：${params.url ?? params.target ?? '未知'}`,
+      'push': '推送代码更改',
+      'sudo': '以管理员权限执行命令',
+      'send_to_thirdparty': '将内容发送给第三方',
+    };
+
+    const description = descriptions[action] ?? `${action} (${JSON.stringify(params)})`;
+
+    // 显示确认消息
+    const win = this.mainWindow;
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('chat:message', {
+        text: `⚠️ 确认：${description}，是否继续？`,
+        speaker: 'system',
+      });
+    }
+
+    // 语音朗读确认请求
+    this.speak(`请确认：${description}，回复"是"继续，"否"取消`);
+
+    // TODO: 实现语音识别确认（等待用户语音回复）
+    // 暂时返回 false，需要手动确认
+    return false;
   }
 
   private requireString(params: Record<string, unknown>, key: string): string {

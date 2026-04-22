@@ -119,6 +119,11 @@ export class ControlServer {
             this.writeJson(res, 403, { ok: false, action, error: err.message, code: 'UNAUTHORIZED' });
             return;
           }
+          if (err?.code === 'CONFIRMATION_REJECTED') {
+            // 敏感操作被用户拒绝 → Hermes Agent 告知用户
+            this.writeJson(res, 200, { ok: false, action, error: err.message, code: 'CONFIRMATION_REJECTED', needsUserConfirmation: true });
+            return;
+          }
           const message = err instanceof Error ? err.message : String(err);
           this.writeJson(res, 200, { ok: false, action, error: message });
         }
