@@ -77,6 +77,7 @@ export class StateEngine {
   private currentContext: StateContext;
   private stateEntryTime: number;
   private initialized: boolean;
+  private lastRetreatAt: number | null;
 
   constructor(initialState: CompanionState = CompanionState.STEALTH) {
     this.currentState = initialState;
@@ -86,6 +87,7 @@ export class StateEngine {
     this.transitionActions = new Map();
     this.stateEntryTime = Date.now();
     this.initialized = false;
+    this.lastRetreatAt = null;
 
     // Initialize transition counts for all states
     Object.values(CompanionState).forEach(state => {
@@ -265,7 +267,12 @@ export class StateEngine {
     
     // Record exit of current state
     this.recordStateExit(this.currentState);
-    
+
+    // Track when we last exited RETREATING (for cooldown)
+    if (this.currentState === CompanionState.RETREATING) {
+      this.lastRetreatAt = Date.now();
+    }
+
     // Update state
     this.currentState = newState;
     this.stateEntryTime = Date.now();
@@ -426,8 +433,13 @@ export class StateEngine {
   // ============================================================================
 
   private shouldRetreat(context: StateContext): boolean {
-    return context.manualOverride || 
-           context.errorCount > 5 || 
+    // Don't retreat if we just exited RETREATING (cooldown period)
+    const RETREAT_COOLDOWN_MS = 30_000;
+    if (this.lastRetreatAt !== null && Date.now() - this.lastRetreatAt < RETREAT_COOLDOWN_MS) {
+      return false;
+    }
+    return context.manualOverride ||
+           context.errorCount > 50 ||
            context.systemLoad > 0.9;
   }
 
@@ -499,6 +511,11 @@ export class StateEngine {
 
     // Record exit of current state
     this.recordStateExit(from);
+
+    // Track when we last exited RETREATING (for cooldown)
+    if (from === CompanionState.RETREATING) {
+      this.lastRetreatAt = Date.now();
+    }
 
     // Execute transition actions
     this.executeTransitionActions(from, to, context);
