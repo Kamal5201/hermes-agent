@@ -127,25 +127,38 @@
       <!-- Spotlight Panel -->
       <div id="spotlight-overlay" class="spotlight-overlay" role="dialog" aria-label="Hermes Spotlight" aria-modal="true">
         <div class="spotlight-panel">
-          <div class="spotlight-search-bar">
-            <!-- Apple Spotlight magnifier SVG icon -->
+          <div class="spotlight-topbar">
+            <!-- Apple Spotlight magnifier SVG -->
             <svg class="spotlight-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
               <circle cx="6.5" cy="6.5" stroke="#86868b" stroke-width="1.5"/>
               <path d="M10.5 10.5L14 14" stroke="#86868b" stroke-width="1.5" stroke-linecap="round"/>
             </svg>
-            <input
-              id="spotlight-input"
-              class="spotlight-input"
-              type="text"
-              placeholder="询问 Hermes..."
-              autocomplete="off"
-              autocorrect="off"
-              autocapitalize="off"
-              spellcheck="false"
-            />
-            <span class="spotlight-hint">esc 关闭</span>
+            <div class="spotlight-input-wrap">
+              <input
+                id="spotlight-input"
+                class="spotlight-input"
+                type="text"
+                placeholder="询问 Hermes..."
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+              />
+            </div>
+            <!-- Mode buttons: chat, actions, clipboard, states -->
+            <div class="spotlight-modes">
+              <button class="spotlight-mode-btn active" data-label="对话" data-mode="chat" title="对话模式"></button>
+              <button class="spotlight-mode-btn" data-label="命令" data-mode="actions" title="快捷命令"></button>
+              <button class="spotlight-mode-btn" data-label="剪贴板" data-mode="clipboard" title="剪贴板"></button>
+              <button class="spotlight-mode-btn" data-label="状态" data-mode="states" title="状态控制"></button>
+            </div>
           </div>
-          <div id="spotlight-messages" class="spotlight-messages" role="log" aria-live="polite"></div>
+          <!-- Chat / Actions / Clipboard / States body -->
+          <div id="spotlight-body" class="spotlight-body" role="log" aria-live="polite"></div>
+          <!-- Footer -->
+          <div class="spotlight-footer">
+            <span class="spotlight-footer-hint"><kbd>Enter</kbd> 发送 &nbsp;·&nbsp; <kbd>Esc</kbd> 关闭 &nbsp;·&nbsp; <kbd>Tab</kbd> 切换模式</span>
+          </div>
         </div>
       </div>
     </main>
@@ -1007,9 +1020,10 @@
       let spotlightAutoCloseTimer = null;
       const SPOTLIGHT_AUTO_CLOSE_MS = 4000;
 
-      const spotlightOverlay = document.getElementById('spotlight-overlay');
-      const spotlightInput  = document.getElementById('spotlight-input');
-      const spotlightMessages = document.getElementById('spotlight-messages');
+      const spotlightOverlay  = document.getElementById('spotlight-overlay');
+      const spotlightInput   = document.getElementById('spotlight-input');
+      const spotlightBody    = document.getElementById('spotlight-body');
+      let   spotlightMode    = 'chat'; // 'chat' | 'actions' | 'clipboard' | 'states'
 
       function showSpotlight() {
         if (spotlightVisible) return;
@@ -1040,25 +1054,25 @@
       }
 
       function appendSpotlightMessage(text, type) {
-        if (!spotlightMessages) return;
+        if (!spotlightBody) return;
         const div = document.createElement('div');
-        div.className = `spotlight-message ${type}`;
+        div.className = `spotlight-msg ${type}`;
         if (type === 'hermes') {
           div.innerHTML = `
-            <div class="spotlight-message-avatar">H</div>
-            <div class="spotlight-message-bubble">
-              <span class="spotlight-message-text"></span>
+            <div class="spotlight-avatar hermes">H</div>
+            <div class="spotlight-bubble">
+              <span class="spotlight-msg-text"></span>
             </div>`;
         } else {
-          div.innerHTML = `<div class="spotlight-message-bubble"><span class="spotlight-message-text">${escapeHtml(text)}</span></div>`;
+          div.innerHTML = `<div class="spotlight-bubble"><span class="spotlight-msg-text">${escapeHtml(text)}</span></div>`;
         }
-        spotlightMessages.appendChild(div);
-        spotlightMessages.scrollTop = spotlightMessages.scrollHeight;
+        spotlightBody.appendChild(div);
+        spotlightBody.scrollTop = spotlightBody.scrollHeight;
         resetSpotlightAutoClose();
 
         // Typewriter effect for Hermes messages
         if (type === 'hermes' && text.length > 20) {
-          const textSpan = div.querySelector('.spotlight-message-text');
+          const textSpan = div.querySelector('.spotlight-msg-text');
           if (textSpan) {
             let i = 0;
             const interval = setInterval(() => {
@@ -1067,13 +1081,12 @@
               i++;
               if (i >= text.length) {
                 clearInterval(interval);
-                spotlightMessages.scrollTop = spotlightMessages.scrollHeight;
+                spotlightBody.scrollTop = spotlightBody.scrollHeight;
               }
             }, 20);
           }
         } else if (type === 'hermes') {
-          // Short messages: show immediately
-          const textSpan = div.querySelector('.spotlight-message-text');
+          const textSpan = div.querySelector('.spotlight-msg-text');
           if (textSpan) textSpan.textContent = text;
         }
       }
@@ -1095,7 +1108,85 @@
       }
 
       function wireSpotlight() {
-        // Keyboard events
+        // ─── Mode switching ───────────────────────────────────────
+        function setSpotlightMode(mode) {
+          spotlightMode = mode;
+          // Update mode buttons
+          document.querySelectorAll('.spotlight-mode-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.getAttribute('data-mode') === mode);
+          });
+          // Clear body and show appropriate content
+          if (!spotlightBody) return;
+          spotlightBody.innerHTML = '';
+          spotlightBody.className = `spotlight-body ${mode}`;
+
+          if (mode === 'actions') {
+            renderActionsMode();
+          } else if (mode === 'states') {
+            renderStatesMode();
+          }
+          // chat and clipboard use the message list (already empty on mode switch)
+        }
+
+        function renderActionsMode() {
+          if (!spotlightBody) return;
+          const actions = [
+            { icon: '🤖', name: 'AI 对话', desc: '和 Hermes 聊天' },
+            { icon: '📸', name: '截屏', desc: '截取当前屏幕' },
+            { icon: '🔍', name: '网页搜索', desc: '搜索网页内容' },
+            { icon: '💻', name: '执行命令', desc: '在终端运行命令' },
+            { icon: '📁', name: '文件操作', desc: '打开/查找文件' },
+            { icon: '🌐', name: '打开网址', desc: '在浏览器打开链接' },
+          ];
+          actions.forEach(action => {
+            const card = document.createElement('div');
+            card.className = 'spotlight-action-card';
+            card.innerHTML = `
+              <div class="spotlight-action-icon">${action.icon}</div>
+              <div class="spotlight-action-info">
+                <div class="spotlight-action-name">${action.name}</div>
+                <div class="spotlight-action-desc">${action.desc}</div>
+              </div>`;
+            card.addEventListener('click', () => {
+              if (spotlightInput instanceof HTMLInputElement) {
+                spotlightInput.value = action.name + ' ';
+                spotlightInput.focus();
+                setSpotlightMode('chat');
+              }
+            });
+            spotlightBody?.appendChild(card);
+          });
+        }
+
+        function renderStatesMode() {
+          if (!spotlightBody) return;
+          const states = [
+            { id: 'STEALTH', label: '🔒 静默模式', desc: '完全隐藏，观察但不干预' },
+            { id: 'OBSERVING', label: '👁️ 观察模式', desc: '被动收集信息，不主动响应' },
+            { id: 'HINT', label: '💡 提示模式', desc: '低交互，仅关键提示' },
+            { id: 'ACTIVE', label: '⚡ 活跃模式', desc: '完全激活，可执行所有操作' },
+          ];
+          states.forEach(state => {
+            const row = document.createElement('div');
+            row.className = 'spotlight-state-row';
+            row.innerHTML = `
+              <div class="spotlight-state-orb"></div>
+              <div class="spotlight-state-name">${state.label}</div>
+              <div class="spotlight-state-desc" style="font-size:12px;color:#86868b;margin-right:8px">${state.desc}</div>
+              <span class="spotlight-state-check">✓</span>`;
+            row.addEventListener('click', () => {
+              window.hermes?.control?.('setState', { allowState: state.id });
+              if (spotlightInput instanceof HTMLInputElement) {
+                spotlightInput.value = `切换到 ${state.id}`;
+                spotlightInput.focus();
+              }
+              setSpotlightMode('chat');
+            });
+            spotlightBody?.appendChild(row);
+          });
+        }
+
+        // ─── Keyboard events ─────────────────────────────────────
         if (spotlightInput instanceof HTMLInputElement) {
           spotlightInput.addEventListener('keydown', (event) => {
             if (event.key === 'Escape') {
@@ -1106,6 +1197,13 @@
               event.preventDefault();
               submitSpotlightMessage();
             }
+            // Tab cycles modes
+            if (event.key === 'Tab' && !event.shiftKey) {
+              event.preventDefault();
+              const modes = ['chat', 'actions', 'clipboard', 'states'];
+              const idx = modes.indexOf(spotlightMode);
+              setSpotlightMode(modes[(idx + 1) % modes.length]);
+            }
             resetSpotlightAutoClose();
           });
 
@@ -1113,6 +1211,17 @@
             resetSpotlightAutoClose();
           });
         }
+
+        // ─── Mode button clicks ───────────────────────────────────
+        document.querySelectorAll('.spotlight-mode-btn').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            const mode = (e.currentTarget as HTMLElement).getAttribute('data-mode') ?? 'chat';
+            setSpotlightMode(mode);
+            if (mode === 'chat' && spotlightInput instanceof HTMLInputElement) {
+              spotlightInput.focus();
+            }
+          });
+        });
 
         // Click outside → close
         if (spotlightOverlay) {
@@ -1123,11 +1232,13 @@
           });
         }
 
-        // Hermes messages appear in Spotlight too
+        // Hermes messages appear in Spotlight (only in chat mode)
         if (window.hermes?.chat?.onMessage) {
           window.hermes.chat.onMessage((payload) => {
             if (payload.speaker !== 'user' && payload.text) {
-              appendSpotlightMessage(payload.text, 'hermes');
+              if (spotlightMode === 'chat') {
+                appendSpotlightMessage(payload.text, 'hermes');
+              }
             }
           });
         }
