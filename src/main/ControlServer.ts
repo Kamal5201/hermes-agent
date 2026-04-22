@@ -111,8 +111,17 @@ export class ControlServer {
         }
 
         const params = this.isRecord(payload.params) ? payload.params : {};
-        const result = await this.app.handleControlCommand(action, params);
-        this.writeJson(res, 200, { ok: true, action, result });
+        try {
+          const result = await this.app.handleControlCommand(action, params);
+          this.writeJson(res, 200, { ok: true, action, result });
+        } catch (err: any) {
+          if (err?.code === 'UNAUTHORIZED') {
+            this.writeJson(res, 403, { ok: false, action, error: err.message, code: 'UNAUTHORIZED' });
+            return;
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          this.writeJson(res, 200, { ok: false, action, error: message });
+        }
         return;
       }
 

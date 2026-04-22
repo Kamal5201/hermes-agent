@@ -345,6 +345,12 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
   }
 
   public async handleControlCommand(action: string, params: Record<string, unknown> = {}): Promise<unknown> {
+    // 无感授权：图形控制仅在 ACTIVE 状态下允许（乔布斯哲学：状态本身即授权）
+    const graphicalCommands = ['goto', 'click', 'type', 'screenshot'];
+    if (graphicalCommands.includes(action)) {
+      this.requireGuiControlAuthorized();
+    }
+
     switch (action) {
       case 'getState':
         return this.getCurrentStatePayload();
@@ -1254,6 +1260,20 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
     return (Object.values(CompanionState) as string[]).includes(normalized)
       ? normalized as CompanionState
       : null;
+  }
+
+  /**
+   * 无感授权检查（乔布斯哲学：ACTIVE 状态本身即授权）
+   * 图形控制命令（goto/click/type/screenshot）仅在 ACTIVE 状态下可执行
+   * 用户切换到 ACTIVE = 授权开启；离开 ACTIVE = 授权自动收回
+   */
+  private requireGuiControlAuthorized(): void {
+    const state = this.services?.state?.getCurrentState();
+    if (state !== CompanionState.ACTIVE) {
+      const err = new Error(`GUI control requires ACTIVE state (current: ${state})`) as Error & { code?: string };
+      err.code = 'UNAUTHORIZED';
+      throw err;
+    }
   }
 
   private requireString(params: Record<string, unknown>, key: string): string {
