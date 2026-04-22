@@ -1385,7 +1385,7 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
   public async handleIncomingUserMessage(text: string): Promise<void> {
     if (!this.pendingConfirmation) {
       // 没有待确认的敏感操作 → 普通聊天消息
-      this.addToInbox({ type: 'chat', text, timestamp: Date.now() });
+      // 注意：消息已被 popInbox() 取出，不需要再 addToInbox，直接显示即可
       const win = this.mainWindow;
       if (win && !win.isDestroyed()) {
         win.webContents.send('chat:message', { text: `你: ${text}`, speaker: 'user' });
