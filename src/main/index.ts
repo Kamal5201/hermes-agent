@@ -102,8 +102,10 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(() => {
+    console.error('[Main] app.whenReady fired, starting bootstrap');
     void bootstrap();
   }).catch((error) => {
+    console.error('[Main] Unhandled error in whenReady:', error);
     logger.error('Application bootstrap failed', error);
     void shutdown().finally(() => app.quit());
   });

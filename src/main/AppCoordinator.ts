@@ -186,12 +186,16 @@ export class AppCoordinator extends EventEmitter {
 
     this.logger.info('Starting Hermes Companion bootstrap...');
 
+    console.error('[AppCoordinator] Bootstrap starting...');
     try {
       // 初始化服务
       this.services = this.initializeServices();
-      
+      console.error('[AppCoordinator] Services initialized');
+
       // 创建主窗口
+      console.error('[AppCoordinator] About to create main window');
       this.mainWindow = this.createMainWindow();
+      console.error('[AppCoordinator] Main window created:', !!this.mainWindow);
       
       // 连接 MCP
       if (this.config.mcpUrl) {
@@ -574,9 +578,13 @@ export class AppCoordinator extends EventEmitter {
   }
 
   private createMainWindow(): BrowserWindow {
+    console.error('[AppCoordinator] createMainWindow called');
     const { width, height } = screen.getPrimaryDisplay().workAreaSize;
     const x = Math.max(16, width - this.config.overlayWidth - 24);
     const y = Math.max(16, height - this.config.overlayHeight - 24);
+
+    const preloadPath = this.resolvePreloadFile();
+    console.error('[AppCoordinator] Preload path resolved:', preloadPath);
 
     const window = new BrowserWindow({
       width: this.config.overlayWidth,
@@ -647,8 +655,9 @@ export class AppCoordinator extends EventEmitter {
     ];
 
     for (const candidate of candidates) {
-      this.logger.debug(`Trying renderer path: ${candidate} exists=${existsSync(candidate)}`);
-      if (existsSync(candidate)) {
+      const exists = existsSync(candidate);
+      console.error(`[AppCoordinator] Trying renderer path: ${candidate} exists=${exists}`);
+      if (exists) {
         return candidate;
       }
     }
@@ -658,6 +667,7 @@ export class AppCoordinator extends EventEmitter {
 
   private resolvePreloadFile(): string {
     const preloadPath = path.join(app.getAppPath(), 'dist/preload/index.js');
+    console.error('[AppCoordinator] Checking preload path:', preloadPath, 'exists=', existsSync(preloadPath));
 
     if (!existsSync(preloadPath)) {
       throw new Error(`Preload bundle not found: ${preloadPath}. Run TypeScript build first.`);

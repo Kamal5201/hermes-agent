@@ -1,0 +1,46 @@
+
+157892 11:17:48.337162+0800    corespeechd     Loading Preferences From User CFPrefsD
+157893 11:17:48.349838+0800    duetexpertd     BMStoreSource.sendEvent
+157894 11:17:48.351867+0800    duetexpertd     BMStoreSource.sendEvent
+157895 11:17:48.375385+0800    duetexpertd     Activity for state dumps
+157896 11:17:48.404500+0800    siriknowledged  BMAccessClient.requestAccessToResource: Set
+157897 11:17:48.418307+0800    duetexpertd     BMStoreSource.sendEvent
+157898 11:17:48.421011+0800    duetexpertd     BMStoreSource.sendEvent
+157899 11:17:48.479866+0800    duetexpertd     Activity for state dumps
+157900 11:17:48.501363+0800    siriknowledged  BMAccessClient.requestAccessToResource: Set
+157901 11:17:48.502365+0800    duetexpertd     BMStoreSource.sendEvent
+157902 11:17:48.505470+0800    duetexpertd     BMStoreSource.sendEvent
+157903 11:17:48.514549+0800    duetexpertd     _BMXPCFileManager._fileHandleForFileAtPath:flags:protection:error:
+157904 11:17:48.525700+0800    IsExtensionEnabled      discovery
+157905 11:17:48.542334+0800    DockHelper      end-index-batch
+157906 11:17:48.561297+0800    duetexpertd     _BMXPCFileManager._fileHandleForFileAtPath:flags:protection:error:
+157907 11:17:48.567199+0800    duetexpertd     _BMXPCFileManager._fileHandleForFileAtPath:flags:protection:error:
+157908 11:17:48.568396+0800    duetexpertd     _BMXPCFileManager._fileHandleForFileAtPath:flags:protection:error:
+157909 11:17:48.570147+0800    duetexpertd     CL: CLLocationManager
+157910 11:17:48.588881+0800    siriknowledged  BMAccessClient.requestAccessToResource: Set
+157911 11:17:48.603331+0800    duetexpertd     _BMXPCFileManager._fileHandleForFileAtPath:flags:protection:error:
+157912 11:17:48.612660+0800    duetexpertd     _BMXPCFileManager._fileHandleForFileAtPath:flags:protection:error:
+157913 11:17:48.617671+0800    duetexpertd     _BMXPCFileManager._fileHandleForFileAtPath:flags:protection:error:
+157914 11:17:48.620012+0800    duetexpertd     _BMXPCFileManager._fileHandleForFileAtPath:flags:protection:error:
+157915 11:17:48.624641+0800    duetexpertd     _BMXPCFileManager._fileHandleForFileAtPath:flags:protection:error:
+157916 11:17:48.627866+0800    duetexpertd     _BMXPCFileManager._fileHandleForFileAtPath:flags:protection:error:
+157917 11:17:48.651621+0800    siriknowledged  BMAccessClient.requestAccessToResource: Set
+157918 11:17:48.653439+0800    duetexpertd     _BMXPCFileManager._fileHandleForFileAtPath:flags:protection:error:
+157919 11:17:48.664122+0800    duetexpertd     _BMXPCFileManager._fileHandleForFileAtPath:flags:protection:error:
+157920 11:17:48.664865+0800    duetexpertd     _BMXPCFileManager._fileHandleForFileAtPath:flags:protection:error:
+157921 11:17:48.666872+0800    duetexpertd     _BMXPCFileManager._fileHandleForFileAtPath:flags:protection:error:
+157922 11:17:48.668262+0800    duetexpertd     _BMXPCFileManager._fileHandleForFileAtPath:flags:protection:error:
+157923 11:17:48.673939+0800    duetexpertd     _BMXPCFileManager._fileHandleForFileAtPath:flags:protection:error:
+157924 11:17:48.674807+0800    duetexpertd     _BMXPCFileManager._fileHandleForFileAtPath:flags:protection:error:
+157925 11:17:48.677043+0800    duetexpertd     _BMXPCFileManager._fileHandleForFileAtPath:flags:protection:error:
+157926 11:17:48.678272+0800    duetexpertd     _BMXPCFileManager._fileHandleForFileAtPath:flags:protection:error:
+157927 11:17:48.679764+0800    duetexpertd     CL: CLLocationManager
+157928 11:17:48.684628+0800    siriknowledged  BMAccessClient.requestAccessToResource: Set
+157929 11:17:48.730072+0800    siriknowledged  BMAccessClient.requestAccessToResource: Set
+157930 11:17:48.747407+0800    siriknowledged  BMAccessClient.requestAccessToResource: Set
+157931 11:17:48.774167+0800    siriknowledged  BMAccessClient.requestAccessToResource: Set
+157932 11:17:48.785029+0800    runningboardd   acquireAssertionWithDescriptor
+157933 11:17:48.785316+0800    runningboardd   invalidateAssertionWithIdentifier
+157934 11:17:48.786060+0800    runningboardd   invalidateAssertionWithIdentifier
+157935 11:17:48.786981+0800    NotificationCenter      CFURLResolveBookmarkData
+157936 11:17:48.788153+0800    NotificationCenter      container_create_or_lookup_path_for_pl
