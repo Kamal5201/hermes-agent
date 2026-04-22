@@ -826,7 +826,7 @@ body {
   }
 }
 
-/* ─── Spotlight Panel ─────────────────────────────────────────────────── */
+/* ─── Spotlight Panel — Apple macOS Spotlight 原版 ────────────────────── */
 .spotlight-overlay {
   position: fixed;
   inset: 0;
@@ -834,10 +834,10 @@ body {
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding-top: 15vh;
+  padding-top: 20vh;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 150ms ease;
+  transition: opacity 80ms ease;
 }
 
 .spotlight-overlay.visible {
@@ -846,43 +846,41 @@ body {
 }
 
 .spotlight-panel {
-  width: 640px;
-  max-width: calc(100vw - 32px);
-  background: rgba(28, 28, 30, 0.92);
-  backdrop-filter: blur(30px);
-  -webkit-backdrop-filter: blur(30px);
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5),
-              0 0 0 1px rgba(255, 255, 255, 0.05);
+  width: 680px;
+  max-width: calc(100vw - 48px);
+  background: #ffffff;
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.08),
+    0 3px 14px rgba(0, 0, 0, 0.12),
+    0 14px 48px rgba(0, 0, 0, 0.20);
   overflow: hidden;
-  transform: scale(0.96);
-  transform-origin: top center;
-  transition: transform 150ms ease;
+  transform: scale(0.98) translateY(-4px);
+  transition: transform 120ms cubic-bezier(0.2, 0, 0, 1.0);
 }
 
 .spotlight-overlay.visible .spotlight-panel {
-  transform: scale(1);
+  transform: scale(1) translateY(0);
 }
 
+/* 搜索栏 — Apple 风格大圆角输入框 */
 .spotlight-search-bar {
   display: flex;
   align-items: center;
+  margin: 0;
   padding: 0 16px;
-  height: 52px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  height: 54px;
+  background: #f5f5f7;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
   gap: 10px;
-  transition: transform 100ms ease;
 }
 
-.spotlight-overlay.visible .spotlight-search-bar {
-  transform: scale(1.01);
-}
-
+/* Apple 搜索图标 SVG */
 .spotlight-icon {
-  font-size: 20px;
-  opacity: 0.5;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
+  opacity: 0.5;
   user-select: none;
 }
 
@@ -891,75 +889,102 @@ body {
   background: transparent;
   border: none;
   outline: none;
-  color: #ffffff;
-  font-size: 16px;
-  font-family: inherit;
-  caret-color: #FFD60A;
+  color: #1d1d1f;
+  font-size: 20px;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+  font-weight: 300;
+  caret-color: #007aff;
 }
 
 .spotlight-input::placeholder {
-  color: rgba(255, 255, 255, 0.35);
+  color: #86868b;
 }
 
+/* 关闭提示 */
 .spotlight-hint {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.3);
+  font-size: 11px;
+  color: #86868b;
   flex-shrink: 0;
-  user-select: none;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
 }
 
+/* 消息列表 */
 .spotlight-messages {
-  max-height: 340px;
+  max-height: 380px;
   overflow-y: auto;
-  padding: 12px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  padding: 6px 0 8px;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+  scrollbar-color: rgba(0, 0, 0, 0.15) transparent;
 }
 
-.spotlight-messages::-webkit-scrollbar { width: 4px; }
+.spotlight-messages::-webkit-scrollbar { width: 5px; }
 .spotlight-messages::-webkit-scrollbar-track { background: transparent; }
-.spotlight-messages::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 2px; }
+.spotlight-messages::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); border-radius: 3px; }
 
 @keyframes spotlightMessageIn {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* Hermes 消息 — Apple 蓝色风格，简洁 */
 .spotlight-message {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  animation: spotlightMessageIn 200ms ease;
+  gap: 10px;
+  padding: 8px 16px;
+  animation: spotlightMessageIn 150ms ease;
 }
 
 .spotlight-message.hermes {
-  background: rgba(255, 214, 10, 0.08);
-  border-radius: 8px;
-  padding: 10px 12px;
+  background: transparent;
 }
 
-.spotlight-message.hermes .spotlight-message-dot {
-  color: #FFD60A;
-  font-size: 8px;
-  margin-top: 5px;
+.spotlight-message.hermes .spotlight-message-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #007aff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: white;
   flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.spotlight-message.hermes .spotlight-message-bubble {
+  background: #f5f5f7;
+  border-radius: 18px;
+  border-top-left-radius: 4px;
+  padding: 8px 14px;
+  max-width: 85%;
 }
 
 .spotlight-message.hermes .spotlight-message-text {
-  color: #FFD60A;
+  color: #1d1d1f;
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.55;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
 }
 
+/* 用户消息 — 右对齐，蓝色气泡 */
 .spotlight-message.user {
   flex-direction: row-reverse;
+  padding: 6px 16px;
+}
+
+.spotlight-message.user .spotlight-message-bubble {
+  background: #007aff;
+  border-radius: 18px;
+  border-top-right-radius: 4px;
+  padding: 8px 14px;
+  max-width: 85%;
 }
 
 .spotlight-message.user .spotlight-message-text {
-  color: rgba(255, 255, 255, 0.85);
+  color: #ffffff;
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.55;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
 }

@@ -128,7 +128,11 @@
       <div id="spotlight-overlay" class="spotlight-overlay" role="dialog" aria-label="Hermes Spotlight" aria-modal="true">
         <div class="spotlight-panel">
           <div class="spotlight-search-bar">
-            <span class="spotlight-icon">🔍</span>
+            <!-- Apple Spotlight magnifier SVG icon -->
+            <svg class="spotlight-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="6.5" cy="6.5" stroke="#86868b" stroke-width="1.5"/>
+              <path d="M10.5 10.5L14 14" stroke="#86868b" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
             <input
               id="spotlight-input"
               class="spotlight-input"
@@ -1040,15 +1044,19 @@
         const div = document.createElement('div');
         div.className = `spotlight-message ${type}`;
         if (type === 'hermes') {
-          div.innerHTML = `<span class="spotlight-message-dot">●</span><span class="spotlight-message-text"></span>`;
+          div.innerHTML = `
+            <div class="spotlight-message-avatar">H</div>
+            <div class="spotlight-message-bubble">
+              <span class="spotlight-message-text"></span>
+            </div>`;
         } else {
-          div.innerHTML = `<span class="spotlight-message-text">${escapeHtml(text)}</span>`;
+          div.innerHTML = `<div class="spotlight-message-bubble"><span class="spotlight-message-text">${escapeHtml(text)}</span></div>`;
         }
         spotlightMessages.appendChild(div);
         spotlightMessages.scrollTop = spotlightMessages.scrollHeight;
         resetSpotlightAutoClose();
 
-        // Typewriter effect for Hermes messages longer than 20 chars
+        // Typewriter effect for Hermes messages
         if (type === 'hermes' && text.length > 20) {
           const textSpan = div.querySelector('.spotlight-message-text');
           if (textSpan) {
@@ -1061,8 +1069,12 @@
                 clearInterval(interval);
                 spotlightMessages.scrollTop = spotlightMessages.scrollHeight;
               }
-            }, 20); // 20ms per character
+            }, 20);
           }
+        } else if (type === 'hermes') {
+          // Short messages: show immediately
+          const textSpan = div.querySelector('.spotlight-message-text');
+          if (textSpan) textSpan.textContent = text;
         }
       }
 
