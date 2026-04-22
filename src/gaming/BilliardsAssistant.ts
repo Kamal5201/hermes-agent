@@ -7,6 +7,7 @@
 
 import { BaseGameModule, GameType, Point, GameAction, GameFeedback } from './GameAssistant';
 import { PerceptionModule } from '../perception/PerceptionModule';
+import log from 'electron-log/main.js';
 
 export interface Ball {
   id: string;
@@ -42,6 +43,17 @@ export interface BilliardsConfig {
   friction: number;       // 摩擦系数
 }
 
+interface BilliardsGameState {
+  gameType: GameType;
+  timestamp: number;
+  screenWidth: number;
+  screenHeight: number;
+  isActive: boolean;
+  balls: Ball[];
+  cueBall: Ball | null;
+  pockets: Pocket[];
+}
+
 const DEFAULT_CONFIG: BilliardsConfig = {
   tableColor: '#0a5c36',
   tableWidth: 2540,      // 9尺球台 (像素)
@@ -71,16 +83,7 @@ export class BilliardsAssistant extends BaseGameModule {
     this.perception = perception;
   }
   
-  public async captureState(): Promise<{
-    gameType: GameType;
-    timestamp: number;
-    screenWidth: number;
-    screenHeight: number;
-    isActive: boolean;
-    balls: Ball[];
-    cueBall: Ball | null;
-    pockets: Pocket[];
-  }> {
+  public async captureState(): Promise<BilliardsGameState> {
     // 模拟状态捕获
     // 实际实现需要图像识别
     return {
@@ -95,11 +98,7 @@ export class BilliardsAssistant extends BaseGameModule {
     };
   }
   
-  public async analyzeState(state: {
-    balls: Ball[];
-    cueBall: Ball | null;
-    pockets: Pocket[];
-  }): Promise<GameAction | null> {
+  public async analyzeState(state: BilliardsGameState): Promise<GameAction | null> {
     if (!state.cueBall || state.balls.length === 0) {
       return null;
     }
@@ -138,8 +137,8 @@ export class BilliardsAssistant extends BaseGameModule {
       cueAngle: shot.angle || 0,
       power: shot.power || 50,
       english: 0,
-      difficulty: 1 - feedback.confidence,
-      confidence: feedback.confidence,
+      difficulty: 1 - (feedback.confidence ?? feedback.action.confidence),
+      confidence: feedback.confidence ?? feedback.action.confidence,
       estimatedPath: [],
     });
     

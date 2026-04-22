@@ -52,6 +52,7 @@ export interface GameFeedback {
   result: 'success' | 'failure' | 'partial';
   score?: number;
   reward?: number;
+  confidence?: number;
 }
 
 export abstract class BaseGameModule extends EventEmitter {
@@ -73,20 +74,17 @@ export abstract class BaseGameModule extends EventEmitter {
     this.emit('shutdown');
   }
   
-  public abstract async captureState(): Promise<GameState>;
+  public abstract captureState(): Promise<GameState>;
   
   public abstract analyzeState(state: GameState): Promise<GameAction | null>;
   
-  public abstract async executeAction(action: GameAction): Promise<void>;
+  public abstract executeAction(action: GameAction): Promise<void>;
   
   public learn(feedback: GameFeedback): void {
     log.info(`[GameAssistant] Learning from feedback: ${feedback.result}`);
     this.emit('learn', feedback);
   }
   
-  protected emit(event: string, ...args: unknown[]): void {
-    super.emit(event, ...args);
-  }
 }
 
 export class GameAssistant extends EventEmitter {

@@ -40,7 +40,9 @@ export class HotkeyManager extends EventEmitter {
     this.register({
       key: 'f1',
       modifiers: [],
-      action: () => this.emit('showHelp'),
+      action: () => {
+        this.emit('showHelp');
+      },
       description: '显示帮助',
       scope: 'global',
     });
@@ -48,7 +50,9 @@ export class HotkeyManager extends EventEmitter {
     this.register({
       key: 'd',
       modifiers: ['ctrl', 'shift'],
-      action: () => this.emit('toggleDesktop'),
+      action: () => {
+        this.emit('toggleDesktop');
+      },
       description: '切换桌面',
       scope: 'global',
     });
@@ -56,7 +60,9 @@ export class HotkeyManager extends EventEmitter {
     this.register({
       key: 'l',
       modifiers: ['ctrl', 'shift'],
-      action: () => this.emit('lockScreen'),
+      action: () => {
+        this.emit('lockScreen');
+      },
       description: '锁定屏幕',
       scope: 'global',
     });
@@ -65,7 +71,9 @@ export class HotkeyManager extends EventEmitter {
     this.register({
       key: 'n',
       modifiers: ['ctrl'],
-      action: () => this.emit('newWindow'),
+      action: () => {
+        this.emit('newWindow');
+      },
       description: '新建窗口',
       scope: 'app',
     });
@@ -73,7 +81,9 @@ export class HotkeyManager extends EventEmitter {
     this.register({
       key: ',',
       modifiers: ['ctrl'],
-      action: () => this.emit('openSettings'),
+      action: () => {
+        this.emit('openSettings');
+      },
       description: '打开设置',
       scope: 'app',
     });
@@ -81,7 +91,9 @@ export class HotkeyManager extends EventEmitter {
     this.register({
       key: 'q',
       modifiers: ['ctrl'],
-      action: () => this.emit('quit'),
+      action: () => {
+        this.emit('quit');
+      },
       description: '退出应用',
       scope: 'app',
     });

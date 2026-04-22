@@ -134,7 +134,7 @@ export class SystemMonitor extends EventEmitter {
     };
   }
   
-  private async getDiskInfo(): Promise<SystemStats['disk'][]> {
+  private async getDiskInfo(): Promise<SystemStats['disk']> {
     // 简化实现
     return [{
       total: 500 * 1024 * 1024 * 1024,
