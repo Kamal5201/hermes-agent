@@ -7,9 +7,9 @@
   "homepage": "https://github.com/hermes-agent",
   "scripts": {
     "dev": "electron .",
-    "build": "tsc && electron-builder",
-    "build:win": "tsc && electron-builder --win",
-    "build:mac": "tsc && electron-builder --mac",
+    "build": "tsc && node scripts/copy-assets.js && electron-builder",
+    "build:win": "tsc && node scripts/copy-assets.js && electron-builder --win",
+    "build:mac": "tsc && node scripts/copy-assets.js && electron-builder --mac",
     "lint": "eslint src --ext .ts",
     "test": "jest",
     "test:e2e": "node --test tests/e2e/*.test.js",
@@ -27,6 +27,7 @@
       "src/ui/**",
       "src/preload/**",
       "src/database/**",
+      "assets/**",
       "package.json"
     ],
     "asarUnpack": [
