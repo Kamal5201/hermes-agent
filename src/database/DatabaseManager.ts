@@ -824,7 +824,13 @@ export class DatabaseManager {
       let inserted = 0;
       for (const record of items) {
         const result = insertStmt.run({
-          ...record,
+          window_id: record.window_id,
+          title: record.title ?? null,
+          url: record.url ?? null,
+          app_name: record.app_name ?? null,
+          process_id: record.process_id ?? null,
+          start_time: record.start_time,
+          end_time: record.end_time ?? null,
           closed: record.closed ?? 0,
           duration: record.duration ?? null,
         });
