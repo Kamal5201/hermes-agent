@@ -32,9 +32,10 @@ export function initializeLogger(options: LoggerOptions = {}): void {
   const maxFiles = options.maxFiles ?? 5;
 
   electronLog.transports.file.level = level;
-  electronLog.transports.console.level = level;
+  electronLog.transports.console.level = false; // Disable console in packaged app — stdout/stderr is a Terminal pipe that breaks and causes EPIPE storm
   electronLog.transports.file.maxSize = maxSize;
   electronLog.transports.file.format = '[{y}-{m}-{d} {h}:{i}:{s}.{ms}] [{level}] {text}';
+  // Console format only used in dev (console.level = false below in dev):
   electronLog.transports.console.format = '[{h}:{i}:{s}.{ms}] [{level}] {text}';
 
   if (options.appName) {
