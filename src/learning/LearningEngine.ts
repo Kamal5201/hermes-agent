@@ -10,6 +10,11 @@ import {
   LearningProgress,
   PredictionCache,
 } from '../database/DatabaseManager';
+import {
+  AdaptiveLearningRate,
+  type LearningCycleContext,
+} from './AdaptiveLearningRate';
+import { UserProfileStore } from './UserProfile';
 
 export interface UserProfile {
   userId: string;
@@ -22,6 +27,15 @@ export interface UserProfile {
   attentionModel: AttentionModel | null;
   predictionWeights: PredictionWeights;
   feedbackCount: number;
+  acceptedFeedbackCount: number;
+  rejectedFeedbackCount: number;
+  modifiedFeedbackCount: number;
+  cycleStartedAt: number;
+  cycleCompletedDays: number[];
+  lastCycleAdvancedAt: number;
+  cycleCount: number;
+  currentLearningRate: number;
+  learningRateState?: ReturnType<AdaptiveLearningRate['exportState']>;
   createdAt: number;
   updatedAt: number;
 }
@@ -65,15 +79,29 @@ export class LearningEngine {
   private userProfile: UserProfile;
   private learningDay: number = 1;
   private continuousLearningInterval: NodeJS.Timeout | null = null;
+  private readonly profileStore: UserProfileStore<UserProfile>;
+  private readonly adaptiveLearningRate: AdaptiveLearningRate;
 
   // Configuration
   private readonly CYCLE_DAYS = 7;
+  private readonly DAY_IN_SECONDS = 24 * 60 * 60;
   private readonly MIN_PATTERN_FREQUENCY = 3;
   private readonly REPETITION_THRESHOLD = 0.7;
 
   constructor(db: DatabaseManager) {
     this.db = db;
-    this.userProfile = this.initializeProfile();
+    this.profileStore = new UserProfileStore<UserProfile>(db);
+    this.adaptiveLearningRate = AdaptiveLearningRate.getInstance({
+      strategy: 'warmupCosine',
+      initialRate: 0.01,
+      minRate: 0.0005,
+      maxRate: 0.05,
+      warmupSteps: 7,
+      cosAnnealingPeriod: 28,
+    });
+    this.userProfile = this.hydrateProfile(this.profileStore.load(() => this.initializeProfile()));
+    this.restoreLearningRateState();
+    this.persistProfile();
   }
 
   private initializeProfile(): UserProfile {
@@ -95,9 +123,124 @@ export class LearningEngine {
         recency: 0.10,
       },
       feedbackCount: 0,
+      acceptedFeedbackCount: 0,
+      rejectedFeedbackCount: 0,
+      modifiedFeedbackCount: 0,
+      cycleStartedAt: now,
+      cycleCompletedDays: [],
+      lastCycleAdvancedAt: now,
+      cycleCount: 0,
+      currentLearningRate: this.adaptiveLearningRate.getCurrentRate(),
+      learningRateState: this.adaptiveLearningRate.exportState(),
       createdAt: now,
       updatedAt: now,
     };
+  }
+
+  private hydrateProfile(profile: Partial<UserProfile>): UserProfile {
+    const defaults = this.initializeProfile();
+    return {
+      ...defaults,
+      ...profile,
+      appUsageFrequency: profile.appUsageFrequency ?? defaults.appUsageFrequency,
+      timePatterns: profile.timePatterns ?? defaults.timePatterns,
+      operationPatterns: profile.operationPatterns ?? defaults.operationPatterns,
+      habits: profile.habits ?? defaults.habits,
+      attentionModel: profile.attentionModel ?? defaults.attentionModel,
+      predictionWeights: profile.predictionWeights ?? defaults.predictionWeights,
+      cycleCompletedDays: Array.isArray(profile.cycleCompletedDays)
+        ? [...new Set(profile.cycleCompletedDays)].sort((a, b) => a - b)
+        : defaults.cycleCompletedDays,
+      currentLearningRate: profile.currentLearningRate ?? defaults.currentLearningRate,
+      learningRateState: profile.learningRateState ?? defaults.learningRateState,
+    };
+  }
+
+  private restoreLearningRateState(): void {
+    if (this.userProfile.learningRateState) {
+      this.adaptiveLearningRate.importState(this.userProfile.learningRateState);
+      this.userProfile.currentLearningRate = this.adaptiveLearningRate.getCurrentRate();
+      return;
+    }
+
+    this.userProfile.currentLearningRate = this.adaptiveLearningRate.getCurrentRate();
+    this.userProfile.learningRateState = this.adaptiveLearningRate.exportState();
+  }
+
+  private persistProfile(): void {
+    this.userProfile.learningRateState = this.adaptiveLearningRate.exportState();
+    this.userProfile.currentLearningRate = this.adaptiveLearningRate.getCurrentRate();
+    this.userProfile.updatedAt = Math.floor(Date.now() / 1000);
+    this.profileStore.save(this.userProfile);
+  }
+
+  private prepareCycleWindow(referenceTime: number = Math.floor(Date.now() / 1000)): void {
+    if (!this.userProfile.cycleStartedAt) {
+      this.userProfile.cycleStartedAt = referenceTime;
+    }
+
+    const elapsedDays = Math.floor((referenceTime - this.userProfile.cycleStartedAt) / this.DAY_IN_SECONDS);
+    if (elapsedDays >= this.CYCLE_DAYS) {
+      this.userProfile.cycleStartedAt = referenceTime;
+      this.userProfile.cycleCompletedDays = [];
+    }
+  }
+
+  private buildCycleContext(day: number, referenceTime: number = Math.floor(Date.now() / 1000)): LearningCycleContext {
+    const totalFeedback = this.userProfile.acceptedFeedbackCount + this.userProfile.rejectedFeedbackCount + this.userProfile.modifiedFeedbackCount;
+    const positiveFeedbackScore = totalFeedback === 0
+      ? 0.5
+      : (this.userProfile.acceptedFeedbackCount + (this.userProfile.modifiedFeedbackCount * 0.5)) / totalFeedback;
+    const totalPatterns = this.userProfile.timePatterns.length + this.userProfile.operationPatterns.length + this.userProfile.habits.length;
+    const stabilityScore = Math.min(1, totalPatterns / 20);
+    const inactivityHours = Math.max(0, (referenceTime - this.userProfile.lastLearningTimestamp) / 3600);
+
+    return {
+      day,
+      cycleProgress: day / this.CYCLE_DAYS,
+      feedbackScore: positiveFeedbackScore,
+      stabilityScore,
+      inactivityHours,
+    };
+  }
+
+  private finalizeLearningDay(day: number): void {
+    this.prepareCycleWindow();
+
+    const recommendation = this.adaptiveLearningRate.applyCycleContext(this.buildCycleContext(day));
+    const now = Math.floor(Date.now() / 1000);
+    const wasCycleComplete = this.userProfile.cycleCompletedDays.length === this.CYCLE_DAYS;
+
+    if (!this.userProfile.cycleCompletedDays.includes(day)) {
+      this.userProfile.cycleCompletedDays.push(day);
+      this.userProfile.cycleCompletedDays.sort((a, b) => a - b);
+    }
+
+    this.learningDay = day;
+    this.userProfile.learningDay = day;
+    this.userProfile.lastLearningTimestamp = now;
+    this.userProfile.lastCycleAdvancedAt = now;
+    this.userProfile.currentLearningRate = recommendation.recommendedRate;
+
+    if (!wasCycleComplete && this.userProfile.cycleCompletedDays.length === this.CYCLE_DAYS) {
+      this.userProfile.cycleCount += 1;
+    }
+
+    this.persistProfile();
+  }
+
+  private getNextIncompleteDay(): number | null {
+    for (let day = 1; day <= this.CYCLE_DAYS; day++) {
+      if (!this.userProfile.cycleCompletedDays.includes(day)) {
+        return day;
+      }
+    }
+    return null;
+  }
+
+  private getExpectedCycleDay(referenceTime: number = Math.floor(Date.now() / 1000)): number {
+    const elapsed = Math.max(0, referenceTime - this.userProfile.cycleStartedAt);
+    return Math.min(this.CYCLE_DAYS, Math.floor(elapsed / this.DAY_IN_SECONDS) + 1);
   }
 
   // ==================== DAY 1: BASIC COLLECTION ====================
@@ -154,8 +297,8 @@ export class LearningEngine {
 
       // Update user profile
       this.userProfile.appUsageFrequency = appFrequency;
-      this.userProfile.learningDay = Math.max(this.userProfile.learningDay, 1);
       this.userProfile.lastLearningTimestamp = Math.floor(Date.now() / 1000);
+      this.finalizeLearningDay(1);
 
       console.log(`[LearningEngine] Day 1: Collected ${windowHistory.length} window history records`);
       console.log(`[LearningEngine] Day 1: Identified ${Object.keys(appFrequency).length} unique apps`);
@@ -288,7 +431,7 @@ export class LearningEngine {
 
       // Update user profile
       this.userProfile.timePatterns = patterns;
-      this.userProfile.learningDay = Math.max(this.userProfile.learningDay, 2);
+      this.finalizeLearningDay(2);
 
       console.log(`[LearningEngine] Day 2: Discovered ${patterns.length} time patterns`);
     } catch (error) {
@@ -367,7 +510,7 @@ export class LearningEngine {
 
       // Update user profile
       this.userProfile.operationPatterns = this.db.getAllOperationPatterns();
-      this.userProfile.learningDay = Math.max(this.userProfile.learningDay, 3);
+      this.finalizeLearningDay(3);
 
       console.log(`[LearningEngine] Day 3: Discovered ${patterns.length} operation patterns`);
     } catch (error) {
@@ -447,7 +590,7 @@ export class LearningEngine {
 
       // Update user profile
       this.userProfile.habits = this.db.getActiveUserHabits();
-      this.userProfile.learningDay = Math.max(this.userProfile.learningDay, 4);
+      this.finalizeLearningDay(4);
 
       console.log(`[LearningEngine] Day 4: Built ${habits.length} user habits`);
     } catch (error) {
@@ -552,7 +695,7 @@ export class LearningEngine {
 
       // Update user profile
       this.userProfile.attentionModel = attentionModel;
-      this.userProfile.learningDay = Math.max(this.userProfile.learningDay, 5);
+      this.finalizeLearningDay(5);
 
       console.log(`[LearningEngine] Day 5: Built attention model with avg focus ${avgFocusScore.toFixed(2)}`);
     } catch (error) {
@@ -668,7 +811,7 @@ export class LearningEngine {
 
       // Update user profile
       this.userProfile.predictionWeights = weights;
-      this.userProfile.learningDay = Math.max(this.userProfile.learningDay, 6);
+      this.finalizeLearningDay(6);
 
       console.log(`[LearningEngine] Day 6: Optimized prediction weights, total: ${Object.values(weights).reduce((a, b) => a + b, 0).toFixed(2)}`);
     } catch (error) {
@@ -734,8 +877,8 @@ export class LearningEngine {
       this.userProfile.habits = this.db.getActiveUserHabits();
       this.userProfile.timePatterns = this.db.getTimePatterns();
       this.userProfile.operationPatterns = this.db.getAllOperationPatterns();
-      this.userProfile.learningDay = Math.max(this.userProfile.learningDay, 7);
       this.userProfile.updatedAt = Math.floor(Date.now() / 1000);
+      this.finalizeLearningDay(7);
 
       console.log(`[LearningEngine] Day 7: Personalization complete with ${activeHabits.length} active habits`);
     } catch (error) {
@@ -789,6 +932,63 @@ export class LearningEngine {
     console.log(`[LearningEngine] Completed learning for day ${day}`);
   }
 
+  public getCycleStatus(): {
+    currentDay: number;
+    nextDay: number | null;
+    expectedDay: number;
+    cycleStartedAt: number;
+    completedDays: number[];
+    cycleCount: number;
+    currentLearningRate: number;
+    persistenceSavedAt: number | null;
+  } {
+    this.prepareCycleWindow();
+
+    return {
+      currentDay: this.userProfile.learningDay,
+      nextDay: this.getNextIncompleteDay(),
+      expectedDay: this.getExpectedCycleDay(),
+      cycleStartedAt: this.userProfile.cycleStartedAt,
+      completedDays: [...this.userProfile.cycleCompletedDays],
+      cycleCount: this.userProfile.cycleCount,
+      currentLearningRate: this.userProfile.currentLearningRate,
+      persistenceSavedAt: this.profileStore.getMetadata().savedAt,
+    };
+  }
+
+  public async runNextCycleDay(): Promise<number> {
+    this.prepareCycleWindow();
+
+    let nextDay = this.getNextIncompleteDay();
+    if (nextDay === null) {
+      this.userProfile.cycleStartedAt = Math.floor(Date.now() / 1000);
+      this.userProfile.cycleCompletedDays = [];
+      nextDay = 1;
+    }
+
+    await this.learnFromDay(nextDay);
+    return nextDay;
+  }
+
+  public async runScheduledCycle(referenceTime: number = Math.floor(Date.now() / 1000)): Promise<number[]> {
+    this.prepareCycleWindow(referenceTime);
+
+    const expectedDay = this.getExpectedCycleDay(referenceTime);
+    const daysToRun: number[] = [];
+
+    for (let day = 1; day <= expectedDay; day++) {
+      if (!this.userProfile.cycleCompletedDays.includes(day)) {
+        daysToRun.push(day);
+      }
+    }
+
+    for (const day of daysToRun) {
+      await this.learnFromDay(day);
+    }
+
+    return daysToRun;
+  }
+
   /**
    * Run the complete 7-day learning cycle
    */
@@ -812,15 +1012,13 @@ export class LearningEngine {
       this.stopContinuousLearning();
     }
 
-    // Run initial learning cycle
-    this.runFullCycle().catch(console.error);
+    // Run any due day for the current 7-day cycle
+    this.runScheduledCycle().catch(console.error);
 
     // Set up periodic learning
     this.continuousLearningInterval = setInterval(async () => {
       try {
-        // Increment learning day (cycle back after day 7)
-        this.userProfile.learningDay = (this.userProfile.learningDay % this.CYCLE_DAYS) + 1;
-        await this.learnFromDay(this.userProfile.learningDay);
+        await this.runScheduledCycle();
         
         // Refresh app usage frequency
         const windowHistory = this.db.getWindowHistory(100);
@@ -831,6 +1029,7 @@ export class LearningEngine {
           }
         }
         this.userProfile.appUsageFrequency = appFrequency;
+        this.persistProfile();
       } catch (error) {
         console.error('[LearningEngine] Error during continuous learning:', error);
       }
@@ -1057,7 +1256,17 @@ export class LearningEngine {
       }
 
       this.userProfile.feedbackCount++;
+      if (feedback === 'accept') {
+        this.userProfile.acceptedFeedbackCount++;
+      } else if (feedback === 'reject') {
+        this.userProfile.rejectedFeedbackCount++;
+      } else {
+        this.userProfile.modifiedFeedbackCount++;
+      }
       this.userProfile.lastLearningTimestamp = Math.floor(Date.now() / 1000);
+      this.userProfile.currentLearningRate = this.adaptiveLearningRate
+        .applyCycleContext(this.buildCycleContext(this.userProfile.learningDay))
+        .recommendedRate;
 
       // Store in prediction cache for learning
       const cacheEntry: PredictionCache = {
@@ -1074,6 +1283,8 @@ export class LearningEngine {
       } catch (e) {
         // Ignore cache errors
       }
+
+      this.persistProfile();
 
       console.log(`[LearningEngine] Feedback recorded, total feedback count: ${this.userProfile.feedbackCount}`);
     } catch (error) {
@@ -1131,6 +1342,8 @@ export class LearningEngine {
   public async reset(): Promise<void> {
     this.stopContinuousLearning();
     this.userProfile = this.initializeProfile();
+    this.adaptiveLearningRate.resetIteration();
+    this.persistProfile();
     console.log('[LearningEngine] Learning data reset');
   }
 }

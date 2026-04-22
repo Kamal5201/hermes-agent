@@ -4,6 +4,7 @@ import type { LearningEngine } from '../learning/LearningEngine';
 import type { PerceptionModule } from '../perception/PerceptionModule';
 import type { SecurityGuard } from '../security/SecurityGuard';
 import type { StateEngine } from '../state/StateEngine';
+import type { DeviceRegistry, StateSyncManager } from '../sync';
 import type { ExecutionModule, MCPHandler, ConfigStore } from '../mcp';
 
 export class DatabaseConfigStore implements ConfigStore {
@@ -81,6 +82,8 @@ export function setupIpcHandlers(
   mcp: MCPHandler,
   security: SecurityGuard,
   config: ConfigStore,
+  sync: StateSyncManager,
+  deviceRegistry: DeviceRegistry,
 ): void {
   const handle = <TArgs extends unknown[], TResult>(
     channel: string,
@@ -151,5 +154,20 @@ export function setupIpcHandlers(
     }
 
     return { sent: true, timestamp: Date.now() };
+  });
+
+  handle('sync:getDevices', async () => deviceRegistry.listDevices());
+  handle('sync:getStatus', async () => ({
+    connectionState: sync.getConnectionState(),
+    devices: deviceRegistry.listDevices(),
+  }));
+  handle('sync:connect', async (_event, url?: string) => sync.connect(url ? { url } : {}));
+  handle('sync:disconnect', async () => {
+    await sync.disconnect();
+    return { disconnected: true };
+  });
+  handle('sync:broadcastState', async () => {
+    await sync.broadcastState();
+    return { broadcasted: true, timestamp: Date.now() };
   });
 }

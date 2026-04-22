@@ -20,7 +20,7 @@ import log from 'electron-log/main.js';
 
 import DatabaseManager, { WindowHistory } from '../database/DatabaseManager';
 import { LearningEngine } from '../learning/LearningEngine';
-import { ExecutionModule, MCPHandler, MessageType, type MCPMessage } from '../mcp';
+import { createNotification, ExecutionModule, MCPHandler, MessageType, type MCPMessage } from '../mcp';
 import { PerceptionModule } from '../perception/PerceptionModule';
 import { WindowEventPipeline, type WindowEventPayload } from '../perception/WindowEventPipeline';
 import { PredictionEngine } from '../prediction/PredictionEngine';
@@ -28,6 +28,7 @@ import type { PredictionContext } from '../prediction/PredictionTypes';
 import PrivacyManager from '../security/PrivacyManager';
 import { SecurityGuard } from '../security/SecurityGuard';
 import { CompanionState, StateEngine } from '../state/StateEngine';
+import { DeviceRegistry, normalizePlatform, StateSyncManager } from '../sync';
 import { AppleStyleUI, UIState, companionStateToUiState } from '../ui/AppleStyleUI';
 import { DatabaseConfigStore, setupIpcHandlers } from './ipc-handlers';
 import { getLogger, initializeLogger } from './logger';
@@ -42,6 +43,8 @@ export type AppConfig = {
   overlayWidth: number;
   overlayHeight: number;
   mcpUrl?: string;
+  syncUrl?: string;
+  syncHeartbeatMs: number;
   /** 窗口事件管道配置 */
   windowPipelineEnabled: boolean;
   windowPipelineSamplingMs: number;
@@ -65,6 +68,8 @@ export type AppCoordinatorServices = {
   privacy: PrivacyManager;
   config: DatabaseConfigStore;
   mcp: MCPHandler;
+  sync: StateSyncManager;
+  deviceRegistry: DeviceRegistry;
   ui: AppleStyleUI;
 };
 
@@ -83,6 +88,8 @@ function loadEnvConfig(): AppConfig {
     overlayWidth: Number(process.env.OVERLAY_WIDTH ?? 320),
     overlayHeight: Number(process.env.OVERLAY_HEIGHT ?? 200),
     mcpUrl: process.env.HERMES_MCP_URL,
+    syncUrl: process.env.HERMES_SYNC_URL,
+    syncHeartbeatMs: Number(process.env.HERMES_SYNC_HEARTBEAT_MS ?? 30_000),
     windowPipelineEnabled: process.env.WINDOW_PIPELINE_ENABLED !== 'false',
     windowPipelineSamplingMs: Number(process.env.WINDOW_PIPELINE_SAMPLING_MS ?? 1000),
   };
@@ -190,6 +197,10 @@ export class AppCoordinator extends EventEmitter {
       if (this.config.mcpUrl) {
         await this.connectMcp();
       }
+
+      if (this.config.syncUrl) {
+        await this.connectSync();
+      }
       
       // 广播初始状态
       this.broadcastState();
@@ -230,6 +241,7 @@ export class AppCoordinator extends EventEmitter {
         this.services.learning.stopContinuousLearning();
         this.services.perception.dispose();
         await this.services.mcp.disconnect();
+        await this.services.sync.disconnect();
       } catch (error) {
         this.logger.error('Error during service shutdown', error);
       }
@@ -315,6 +327,26 @@ export class AppCoordinator extends EventEmitter {
     const privacy = PrivacyManager.getInstance();
     const config = new DatabaseConfigStore(db);
     const mcp = new MCPHandler(perception, execution, learning, security, privacy, config);
+    const deviceRegistry = new DeviceRegistry(config, {
+      deviceName: `${app.getName()}-${process.platform}`,
+      platform: normalizePlatform(process.platform),
+      capabilities: ['state_sync', 'learning_cycle', 'mcp'],
+    });
+    const sync = new StateSyncManager(deviceRegistry, {
+      connection: {
+        url: this.config.syncUrl ?? '',
+        reconnect: true,
+        heartbeat: this.config.syncHeartbeatMs,
+      },
+      getLocalState: () => ({
+        state: state.getCurrentState(),
+        metadata: {
+          learningDay: learning.getCurrentLearningDay(),
+          mcpConnectionState: mcp.getConnectionState(),
+          errorCount: this.runtimeSignals.errorCount,
+        },
+      }),
+    });
     const ui = AppleStyleUI.getInstance();
     this.windowPipeline = this.config.windowPipelineEnabled
       ? new WindowEventPipeline(perception, db, {
@@ -324,7 +356,7 @@ export class AppCoordinator extends EventEmitter {
       : null;
 
     // 设置 IPC 处理器
-    setupIpcHandlers(perception, execution, state, learning, mcp, security, config);
+    setupIpcHandlers(perception, execution, state, learning, mcp, security, config, sync, deviceRegistry);
 
     // 初始化服务
     const services: AppCoordinatorServices = {
@@ -338,6 +370,8 @@ export class AppCoordinator extends EventEmitter {
       privacy,
       config,
       mcp,
+      sync,
+      deviceRegistry,
       ui,
     };
 
@@ -396,22 +430,37 @@ export class AppCoordinator extends EventEmitter {
 
     // MCP 处理器 - 状态变化
     services.mcp.on('stateChange', (currentState: string, previousState: string) => {
-      this.forwardMcpMessage({
-        id: null,
-        type: MessageType.Notification,
-        method: 'mcp.stateChange',
-        params: {
-          currentState,
-          previousState,
-        },
-        timestamp: Date.now(),
-      });
+      this.forwardMcpMessage(createNotification('mcp.stateChange', {
+        currentState,
+        previousState,
+      }));
     });
 
     // MCP 处理器 - 错误
     services.mcp.on('error', (error: unknown) => {
       this.runtimeSignals.errorCount += 1;
       this.logger.error('MCP error', error);
+    });
+
+    services.sync.on('deviceRegistered', (device) => {
+      void Promise.resolve(services.config.set('sync_devices', services.deviceRegistry.listDevices()))
+        .catch((error: unknown) => {
+          this.logger.warn('Failed to persist sync device registry', error);
+        });
+
+      this.logger.info(`Sync device registered: ${device.deviceName}`);
+    });
+
+    services.sync.on('stateResolved', (record) => {
+      void Promise.resolve(services.config.set('sync_last_resolved_state', record))
+        .catch((error: unknown) => {
+          this.logger.warn('Failed to persist sync state resolution', error);
+        });
+    });
+
+    services.sync.on('error', (error: unknown) => {
+      this.runtimeSignals.errorCount += 1;
+      this.logger.error('State sync error', error);
     });
   }
 
@@ -465,14 +514,21 @@ export class AppCoordinator extends EventEmitter {
     this.lastLearningSyncAt = now;
 
     try {
-      await services.learning.day1_BasicCollection();
+      const executedDays = await services.learning.runScheduledCycle();
+      if (executedDays.length === 0) {
+        await services.learning.day1_BasicCollection();
+      }
+
       const patterns = services.learning.getPatterns();
+      const cycleStatus = services.learning.getCycleStatus();
 
       await Promise.resolve(services.config.set('learning_snapshot', {
         trigger,
         updatedAt: now,
         appName: payload.appName,
-        learningDay: services.learning.getCurrentLearningDay(),
+        learningDay: cycleStatus.currentDay,
+        cycleCompletedDays: cycleStatus.completedDays,
+        currentLearningRate: cycleStatus.currentLearningRate,
         patternsDiscovered: patterns.timePatterns.length + patterns.operationPatterns.length,
         habitsFormed: patterns.habits.length,
       }));
@@ -620,6 +676,23 @@ export class AppCoordinator extends EventEmitter {
     }
   }
 
+  private async connectSync(): Promise<void> {
+    if (!this.services || !this.config.syncUrl) {
+      return;
+    }
+
+    try {
+      await this.services.sync.connect({
+        url: this.config.syncUrl,
+        heartbeat: this.config.syncHeartbeatMs,
+      });
+      await this.services.sync.broadcastState();
+      this.logger.info('State sync connected');
+    } catch (error) {
+      this.logger.warn('State sync connection failed', error);
+    }
+  }
+
   private startStateLoop(services: AppCoordinatorServices): void {
     this.stopStateLoop();
 
@@ -675,6 +748,16 @@ export class AppCoordinator extends EventEmitter {
 
     const payload = this.createStatePayload(state, previousState);
     this.mainWindow.webContents.send('state:changed', payload);
+
+    void this.services.sync.broadcastState({
+      state: payload.state,
+      metadata: {
+        previousState: payload.previousState,
+        uiState: payload.ui.state,
+      },
+    }).catch((error: unknown) => {
+      this.logger.debug('State sync broadcast skipped', error);
+    });
   }
 
   private createStatePayload(

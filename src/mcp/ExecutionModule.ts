@@ -1,6 +1,6 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { keyboard, mouse, Button, Key } from '@computer-use/nut-js';
+import { keyboard, mouse, Button, Key, sleep, straightTo } from '@computer-use/nut-js';
 import log from 'electron-log/main.js';
 
 const execAsync = promisify(exec);
@@ -64,6 +64,15 @@ export interface ExecutionResult {
 export class ExecutionModule {
   private readonly platform = process.platform;
 
+  public async moveMouse(x: number, y: number): Promise<ExecutionResult> {
+    await mouse.setPosition({ x: Math.round(x), y: Math.round(y) });
+
+    return this.createResult('move_mouse', {
+      x: Math.round(x),
+      y: Math.round(y),
+    });
+  }
+
   public async click(x: number, y: number, button: MouseButtonName = 'left'): Promise<ExecutionResult> {
     const targetButton = this.resolveMouseButton(button);
 
@@ -74,6 +83,63 @@ export class ExecutionModule {
       button,
       x: Math.round(x),
       y: Math.round(y),
+    });
+  }
+
+  public async doubleClick(x: number, y: number, button: MouseButtonName = 'left'): Promise<ExecutionResult> {
+    const targetButton = this.resolveMouseButton(button);
+
+    await mouse.setPosition({ x: Math.round(x), y: Math.round(y) });
+    await mouse.doubleClick(targetButton);
+
+    return this.createResult('double_click', {
+      button,
+      x: Math.round(x),
+      y: Math.round(y),
+    });
+  }
+
+  public async drag(fromX: number, fromY: number, toX: number, toY: number): Promise<ExecutionResult> {
+    const start = { x: Math.round(fromX), y: Math.round(fromY) };
+    const end = { x: Math.round(toX), y: Math.round(toY) };
+
+    await mouse.setPosition(start);
+    await mouse.drag(straightTo(end));
+
+    return this.createResult('drag', {
+      from: start,
+      to: end,
+    });
+  }
+
+  public async scroll(ySteps: number, xSteps = 0): Promise<ExecutionResult> {
+    if (ySteps > 0) {
+      await mouse.scrollDown(Math.abs(Math.round(ySteps)));
+    } else if (ySteps < 0) {
+      await mouse.scrollUp(Math.abs(Math.round(ySteps)));
+    }
+
+    if (xSteps > 0) {
+      await mouse.scrollRight(Math.abs(Math.round(xSteps)));
+    } else if (xSteps < 0) {
+      await mouse.scrollLeft(Math.abs(Math.round(xSteps)));
+    }
+
+    return this.createResult('scroll', {
+      ySteps: Math.round(ySteps),
+      xSteps: Math.round(xSteps),
+    });
+  }
+
+  public async wait(ms: number): Promise<ExecutionResult> {
+    if (ms < 0) {
+      throw new Error('wait duration must be non-negative');
+    }
+
+    await sleep(ms);
+
+    return this.createResult('wait', {
+      ms,
     });
   }
 

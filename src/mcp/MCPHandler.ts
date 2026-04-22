@@ -8,8 +8,18 @@ import { PrivacyLevel, type PrivacyPreset } from '../security/PrivacyManager';
 import type PrivacyManager from '../security/PrivacyManager';
 import type { MouseButtonName } from './ExecutionModule';
 import { ExecutionModule } from './ExecutionModule';
-import { MessageType, MCPErrorCode, type MCPMessage, type MCPRequest, type MCPResponse } from './Protocol';
-import { TOOL_NAME_MAP } from './ToolDefinitions';
+import {
+  createResponse,
+  isMCPRequest,
+  MCP_PROTOCOL_VERSION,
+  MessageType,
+  MCPErrorCode,
+  type MCPMessage,
+  type MCPRequest,
+  type MCPResponse,
+  validateMCPMessage,
+} from './Protocol';
+import { TOOL_DEFINITIONS, TOOL_NAME_MAP } from './ToolDefinitions';
 
 export interface ConfigStore {
   get(key: string): Promise<unknown> | unknown;
@@ -161,18 +171,30 @@ export class MCPHandler extends EventEmitter {
   private async handleIncomingData(data: RawData): Promise<void> {
     const messageText = typeof data === 'string' ? data : data.toString();
 
-    let message: MCPMessage;
+    let parsed: unknown;
     try {
-      message = JSON.parse(messageText) as MCPMessage;
+      parsed = JSON.parse(messageText) as unknown;
     } catch (error) {
       const response = this.createErrorResponse(null, MCPErrorCode.ParseError, 'Invalid JSON payload');
       await this.safeSend(response);
       return;
     }
 
+    const validation = validateMCPMessage(parsed);
+    if (!validation.valid || !validation.message) {
+      const response = this.createErrorResponse(
+        null,
+        MCPErrorCode.InvalidRequest,
+        validation.errors.join('; ') || 'Invalid MCP message',
+      );
+      await this.safeSend(response);
+      return;
+    }
+
+    const message = validation.message;
     this.emit('message', message);
 
-    if (message.type !== MessageType.Request || !message.method) {
+    if (!isMCPRequest(message)) {
       return;
     }
 
@@ -180,12 +202,9 @@ export class MCPHandler extends EventEmitter {
 
     try {
       const result = await this.routeToolCall(request.method, request.params ?? {});
-      const response: MCPResponse = {
-        id: request.id,
-        type: MessageType.Response,
-        result,
-        timestamp: Date.now(),
-      };
+      const response: MCPResponse = createResponse(request.id, result, undefined, {
+        capabilities: ['perception', 'execution', 'learning', 'config'],
+      });
       await this.safeSend(response);
     } catch (error) {
       const response = this.createErrorResponse(
@@ -210,6 +229,19 @@ export class MCPHandler extends EventEmitter {
     }
 
     switch (method) {
+      case 'mcp.ping':
+        return {
+          ok: true,
+          protocolVersion: MCP_PROTOCOL_VERSION,
+          connectionState: this.state,
+          timestamp: Date.now(),
+        };
+      case 'mcp.list_tools':
+        return {
+          tools: TOOL_DEFINITIONS,
+          count: TOOL_DEFINITIONS.length,
+          timestamp: Date.now(),
+        };
       case 'perception.capture_screen':
         return this.captureScreen(params);
       case 'perception.get_windows':
@@ -228,6 +260,31 @@ export class MCPHandler extends EventEmitter {
           this.requireNumber(params, 'y'),
           this.getOptionalString(params, 'button', 'left') as MouseButtonName,
         );
+      case 'execution.double_click':
+        return this.execution.doubleClick(
+          this.requireNumber(params, 'x'),
+          this.requireNumber(params, 'y'),
+          this.getOptionalString(params, 'button', 'left') as MouseButtonName,
+        );
+      case 'execution.move_mouse':
+        return this.execution.moveMouse(
+          this.requireNumber(params, 'x'),
+          this.requireNumber(params, 'y'),
+        );
+      case 'execution.drag':
+        return this.execution.drag(
+          this.requireNumber(params, 'fromX'),
+          this.requireNumber(params, 'fromY'),
+          this.requireNumber(params, 'toX'),
+          this.requireNumber(params, 'toY'),
+        );
+      case 'execution.scroll':
+        return this.execution.scroll(
+          this.getOptionalNumber(params, 'ySteps') ?? 0,
+          this.getOptionalNumber(params, 'xSteps') ?? 0,
+        );
+      case 'execution.wait':
+        return this.execution.wait(this.requireNumber(params, 'ms'));
       case 'execution.type_text':
         return this.execution.typeText(this.requireString(params, 'text'));
       case 'execution.press_key':
@@ -244,6 +301,10 @@ export class MCPHandler extends EventEmitter {
         return this.getPrediction(params);
       case 'learning.get_user_profile':
         return this.learning.getUserProfile();
+      case 'learning.get_cycle_status':
+        return this.learning.getCycleStatus();
+      case 'learning.run_cycle_day':
+        return this.runCycleDay(params);
       case 'learning.set_feedback':
         return this.setFeedback(params);
       case 'config.config_get':
@@ -337,6 +398,39 @@ export class MCPHandler extends EventEmitter {
     };
   }
 
+  private async runCycleDay(params: ToolParams): Promise<Record<string, unknown>> {
+    const day = this.getOptionalNumber(params, 'day');
+    const next = this.getOptionalBoolean(params, 'next', false) ?? false;
+
+    if (day !== undefined) {
+      await this.learning.learnFromDay(Math.round(day));
+      return {
+        mode: 'explicit',
+        executedDay: Math.round(day),
+        status: this.learning.getCycleStatus(),
+        timestamp: Date.now(),
+      };
+    }
+
+    if (next) {
+      const executedDay = await this.learning.runNextCycleDay();
+      return {
+        mode: 'next',
+        executedDay,
+        status: this.learning.getCycleStatus(),
+        timestamp: Date.now(),
+      };
+    }
+
+    const executedDays = await this.learning.runScheduledCycle();
+    return {
+      mode: 'scheduled',
+      executedDays,
+      status: this.learning.getCycleStatus(),
+      timestamp: Date.now(),
+    };
+  }
+
   private async setPrivacy(params: ToolParams): Promise<Record<string, unknown>> {
     const enabled = this.getOptionalBoolean(params, 'enabled', false) ?? false;
     this.privacy.setPrivacyMode(enabled);
@@ -369,15 +463,10 @@ export class MCPHandler extends EventEmitter {
   }
 
   private createErrorResponse(id: MCPMessage['id'], code: MCPErrorCode, message: string): MCPResponse {
-    return {
-      id,
-      type: MessageType.Response,
-      error: {
-        code,
-        message,
-      },
-      timestamp: Date.now(),
-    };
+    return createResponse(id, undefined, {
+      code,
+      message,
+    });
   }
 
   private async safeSend(message: MCPResponse): Promise<void> {

@@ -68,6 +68,21 @@ export interface TrainingMetrics {
   validationAccuracy?: number;
 }
 
+export interface LearningCycleContext {
+  day: number;
+  cycleProgress: number;
+  feedbackScore?: number;
+  stabilityScore?: number;
+  inactivityHours?: number;
+}
+
+export interface CycleRateRecommendation {
+  day: number;
+  multiplier: number;
+  recommendedRate: number;
+  reason: string;
+}
+
 export interface AdaptiveAdjustmentResult {
   /** 建议的新学习率 */
   suggestedRate: number;
@@ -347,6 +362,76 @@ export class AdaptiveLearningRate {
     this.config = originalConfig;
 
     return schedule;
+  }
+
+  /**
+   * 根据 7 天学习周期给出学习率建议
+   */
+  public getRecommendedRateForCycleDay(context: LearningCycleContext): CycleRateRecommendation {
+    const day = Math.min(7, Math.max(1, Math.round(context.day)));
+    const baseMultiplierByDay: Record<number, number> = {
+      1: 1.2,
+      2: 1.15,
+      3: 1.1,
+      4: 1.0,
+      5: 0.95,
+      6: 0.9,
+      7: 0.85,
+    };
+
+    let multiplier = baseMultiplierByDay[day] ?? 1.0;
+    const reasons: string[] = [`day_${day}`];
+
+    if (typeof context.feedbackScore === 'number') {
+      if (context.feedbackScore >= 0.75) {
+        multiplier *= 0.9;
+        reasons.push('positive_feedback_stabilized');
+      } else if (context.feedbackScore <= 0.35) {
+        multiplier *= 1.1;
+        reasons.push('negative_feedback_requires_adaptation');
+      }
+    }
+
+    if (typeof context.stabilityScore === 'number') {
+      if (context.stabilityScore >= 0.8) {
+        multiplier *= 0.92;
+        reasons.push('stable_patterns');
+      } else if (context.stabilityScore <= 0.4) {
+        multiplier *= 1.08;
+        reasons.push('unstable_patterns');
+      }
+    }
+
+    if (typeof context.inactivityHours === 'number' && context.inactivityHours >= 24) {
+      multiplier *= 1.05;
+      reasons.push('cold_start_rewarm');
+    }
+
+    if (context.cycleProgress >= 0.85) {
+      multiplier *= 0.95;
+      reasons.push('late_cycle_decay');
+    }
+
+    const recommendedRate = Math.max(
+      this.config.minRate,
+      Math.min(this.config.maxRate, this.config.initialRate * multiplier),
+    );
+
+    return {
+      day,
+      multiplier,
+      recommendedRate,
+      reason: reasons.join(','),
+    };
+  }
+
+  /**
+   * 应用 7 天周期建议到当前学习率
+   */
+  public applyCycleContext(context: LearningCycleContext): CycleRateRecommendation {
+    const recommendation = this.getRecommendedRateForCycleDay(context);
+    this.setRate(recommendation.recommendedRate);
+    return recommendation;
   }
 
   // ==================== 私有方法 ====================

@@ -11,6 +11,8 @@
  * - Day 7: Personalization
  */
 
+import type DatabaseManager from '../database/DatabaseManager';
+
 /**
  * Time of day categories for pattern analysis
  */
@@ -307,4 +309,111 @@ export interface UserLearningPreferences {
     nightStart: number;
     nightEnd: number;
   };
+}
+
+export interface PersistedUserProfileEnvelope<TProfile> {
+  version: number;
+  profile: TProfile;
+  savedAt: number;
+}
+
+export interface UserProfilePersistenceMetadata {
+  exists: boolean;
+  version: number;
+  savedAt: number | null;
+}
+
+export class UserProfileStore<TProfile> {
+  constructor(
+    private readonly db: DatabaseManager,
+    private readonly key: string = 'learning.userProfile',
+    private readonly version: number = 2,
+  ) {}
+
+  public load(fallbackFactory: () => TProfile): TProfile {
+    const entry = this.db.getUserConfig(this.key);
+    if (!entry) {
+      const profile = fallbackFactory();
+      this.save(profile);
+      return profile;
+    }
+
+    try {
+      const envelope = JSON.parse(entry.value) as PersistedUserProfileEnvelope<TProfile>;
+      if (!this.isPersistedEnvelope(envelope)) {
+        throw new Error('Invalid persisted user profile');
+      }
+
+      return envelope.profile;
+    } catch {
+      const profile = fallbackFactory();
+      this.save(profile);
+      return profile;
+    }
+  }
+
+  public save(profile: TProfile): void {
+    const envelope: PersistedUserProfileEnvelope<TProfile> = {
+      version: this.version,
+      profile,
+      savedAt: Date.now(),
+    };
+
+    const serialized = JSON.stringify(envelope);
+    const existing = this.db.getUserConfig(this.key);
+
+    if (existing) {
+      this.db.updateUserConfig(this.key, serialized, 'object');
+      return;
+    }
+
+    this.db.createUserConfig({
+      key: this.key,
+      value: serialized,
+      value_type: 'object',
+    });
+  }
+
+  public reset(profile: TProfile): void {
+    this.save(profile);
+  }
+
+  public getMetadata(): UserProfilePersistenceMetadata {
+    const entry = this.db.getUserConfig(this.key);
+    if (!entry) {
+      return {
+        exists: false,
+        version: this.version,
+        savedAt: null,
+      };
+    }
+
+    try {
+      const envelope = JSON.parse(entry.value) as PersistedUserProfileEnvelope<TProfile>;
+      return {
+        exists: true,
+        version: typeof envelope.version === 'number' ? envelope.version : this.version,
+        savedAt: typeof envelope.savedAt === 'number' ? envelope.savedAt : null,
+      };
+    } catch {
+      return {
+        exists: true,
+        version: this.version,
+        savedAt: null,
+      };
+    }
+  }
+
+  private isPersistedEnvelope(value: unknown): value is PersistedUserProfileEnvelope<TProfile> {
+    if (typeof value !== 'object' || value === null) {
+      return false;
+    }
+
+    const envelope = value as Partial<PersistedUserProfileEnvelope<TProfile>>;
+    return (
+      typeof envelope.version === 'number'
+      && typeof envelope.savedAt === 'number'
+      && 'profile' in envelope
+    );
+  }
 }

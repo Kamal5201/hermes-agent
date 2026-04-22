@@ -11,7 +11,9 @@
     "build:win": "tsc && electron-builder --win",
     "build:mac": "tsc && electron-builder --mac",
     "lint": "eslint src --ext .ts",
-    "test": "jest"
+    "test": "jest",
+    "test:e2e": "node --test tests/e2e/*.test.js",
+    "test:performance": "node --test tests/performance/*.test.js"
   },
   "build": {
     "appId": "com.hermes.companion",
@@ -40,7 +42,8 @@
         "dmg"
       ],
       "icon": "assets/icon.png"
-    }
+    },
+    "publish": null
   },
   "dependencies": {
     "@computer-use/nut-js": "^4.2.0",
