@@ -11,7 +11,8 @@
  * 4. 提供统一的错误处理和恢复机制
  */
 
-import { app, BrowserWindow, screen } from 'electron';
+import { execFile } from 'node:child_process';
+import { app, BrowserWindow, globalShortcut, screen } from 'electron';
 import path from 'path';
 import { EventEmitter } from 'events';
 import { existsSync } from 'fs';
@@ -31,6 +32,7 @@ import { CompanionState, StateEngine } from '../state/StateEngine';
 import { DeviceRegistry, normalizePlatform, StateSyncManager } from '../sync';
 import { AppleStyleUI, UIState, companionStateToUiState } from '../ui/AppleStyleUI';
 import { DatabaseConfigStore, setupIpcHandlers } from './ipc-handlers';
+import ControlServer, { type ControlInboxMessage, type ControlServerApp } from './ControlServer';
 import { getLogger, initializeLogger } from './logger';
 
 // 类型定义
@@ -73,6 +75,8 @@ export type AppCoordinatorServices = {
   ui: AppleStyleUI;
 };
 
+type ChatSpeaker = 'user' | 'hermes' | 'system';
+
 // 导出类型供外部使用 - 使用命名导出
 
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
@@ -100,7 +104,7 @@ function loadEnvConfig(): AppConfig {
  * 
  * 使用单例模式管理整个应用的生命周期
  */
-export class AppCoordinator extends EventEmitter {
+export class AppCoordinator extends EventEmitter implements ControlServerApp {
   private static instance: AppCoordinator | null = null;
   
   private readonly config: AppConfig;
@@ -109,6 +113,7 @@ export class AppCoordinator extends EventEmitter {
   private mainWindow: BrowserWindow | null = null;
   private services: AppCoordinatorServices | null = null;
   private windowPipeline: WindowEventPipeline | null = null;
+  private controlServer: ControlServer | null = null;
   private stateTicker: NodeJS.Timeout | null = null;
   private runtimeSignals: RuntimeSignals;
   private isShuttingDown = false;
@@ -116,6 +121,7 @@ export class AppCoordinator extends EventEmitter {
   private errorRecoveryInitialized = false;
   private lastLearningSyncAt = 0;
   private lastPredictionSyncAt = 0;
+  private inbox: ControlInboxMessage[] = [];
 
   private constructor() {
     super();
@@ -196,6 +202,9 @@ export class AppCoordinator extends EventEmitter {
       console.error('[AppCoordinator] About to create main window');
       this.mainWindow = this.createMainWindow();
       console.error('[AppCoordinator] Main window created:', !!this.mainWindow);
+
+      await this.startControlServer();
+      this.registerGlobalHotkey();
       
       // 连接 MCP
       if (this.config.mcpUrl) {
@@ -239,6 +248,16 @@ export class AppCoordinator extends EventEmitter {
     this.stopStateLoop();
     this.windowPipeline?.stop();
     this.windowPipeline = null;
+    globalShortcut.unregisterAll();
+
+    if (this.controlServer) {
+      try {
+        await this.controlServer.stop();
+      } catch (error) {
+        this.logger.error('Error stopping control server', error);
+      }
+      this.controlServer = null;
+    }
 
     if (this.services) {
       try {
@@ -275,7 +294,12 @@ export class AppCoordinator extends EventEmitter {
     }
 
     this.runtimeSignals.activeUntil = Date.now() + 10_000;
-    this.services.state.forceTransition(CompanionState.ACTIVE, reason);
+    if (this.services.state.getCurrentState() !== CompanionState.ACTIVE) {
+      this.services.state.forceTransition(CompanionState.ACTIVE, reason);
+    } else {
+      this.syncWindowBounds(UIState.ACTIVE);
+      this.updateWindowInteractivity(UIState.ACTIVE);
+    }
     this.emit('companion:activated', reason);
   }
 
@@ -304,6 +328,50 @@ export class AppCoordinator extends EventEmitter {
     this.mainWindow.showInactive();
     this.broadcastState();
     return this.mainWindow;
+  }
+
+  public addToInbox(message: ControlInboxMessage): void {
+    this.inbox.push(message);
+
+    if (this.inbox.length > 50) {
+      this.inbox.splice(0, this.inbox.length - 50);
+    }
+  }
+
+  public popInbox(): ControlInboxMessage[] {
+    const messages = [...this.inbox];
+    this.inbox = [];
+    return messages;
+  }
+
+  public async handleControlCommand(action: string, params: Record<string, unknown> = {}): Promise<unknown> {
+    switch (action) {
+      case 'getState':
+        return this.getCurrentStatePayload();
+      case 'setState':
+        return this.setCompanionState(params.state);
+      case 'goto':
+        return this.moveWindow(this.requireNumber(params, 'x'), this.requireNumber(params, 'y'));
+      case 'click':
+        return this.clickAt(
+          this.requireNumber(params, 'x'),
+          this.requireNumber(params, 'y'),
+          this.optionalString(params, 'button'),
+        );
+      case 'type':
+        return this.typeText(this.requireString(params, 'text'));
+      case 'screenshot':
+        return this.takeScreenshot();
+      case 'displayMessage':
+        return this.displayMessage(
+          this.requireString(params, 'text'),
+          this.optionalString(params, 'speaker') as ChatSpeaker | undefined,
+        );
+      case 'speak':
+        return this.speak(this.requireString(params, 'text'));
+      default:
+        throw new Error(`Unsupported control action: ${action}`);
+    }
   }
 
   // ============ 私有方法 ============
@@ -361,7 +429,20 @@ export class AppCoordinator extends EventEmitter {
       : null;
 
     // 设置 IPC 处理器
-    setupIpcHandlers(perception, execution, state, learning, mcp, security, config, sync, deviceRegistry);
+    setupIpcHandlers(
+      perception,
+      execution,
+      state,
+      learning,
+      mcp,
+      security,
+      config,
+      sync,
+      deviceRegistry,
+      {
+        onChatSend: async (text: string) => this.handleChatSend(text),
+      },
+    );
 
     // 初始化服务
     const services: AppCoordinatorServices = {
@@ -598,7 +679,7 @@ export class AppCoordinator extends EventEmitter {
       minimizable: false,
       maximizable: false,
       closable: true,
-      movable: false,
+      movable: true,
       fullscreenable: false,
       focusable: false,
       skipTaskbar: true,
@@ -674,6 +755,241 @@ export class AppCoordinator extends EventEmitter {
     }
 
     return preloadPath;
+  }
+
+  private async startControlServer(): Promise<void> {
+    if (!this.controlServer) {
+      this.controlServer = new ControlServer(this);
+    }
+
+    await this.controlServer.start();
+  }
+
+  private registerGlobalHotkey(): void {
+    const accelerator = 'CommandOrControl+Shift+H';
+
+    globalShortcut.unregister(accelerator);
+    const registered = globalShortcut.register(accelerator, () => {
+      void this.openChatSurface('global shortcut', {
+        focusWindow: true,
+        focusInput: true,
+      });
+    });
+
+    if (!registered) {
+      this.logger.warn(`Failed to register global shortcut: ${accelerator}`);
+      return;
+    }
+
+    this.logger.info(`Registered global shortcut: ${accelerator}`);
+  }
+
+  private async handleChatSend(text: string): Promise<void> {
+    const message = text.trim();
+    if (!message) {
+      return;
+    }
+
+    this.addToInbox({
+      type: 'chat',
+      text: message,
+      timestamp: Date.now(),
+    });
+    this.logger.info(`[Chat] User said: ${message}`);
+
+    await this.openChatSurface('user chat', {
+      focusInput: false,
+      focusWindow: false,
+    });
+    this.displayChatMessage(message, 'user');
+  }
+
+  private getCurrentStatePayload(): {
+    state: string;
+    previousState?: string;
+    ui: ReturnType<AppleStyleUI['render']>;
+    timestamp: number;
+  } {
+    if (!this.services) {
+      throw new Error('Services are not initialized');
+    }
+
+    return this.createStatePayload(
+      this.services.state.getCurrentState(),
+      this.services.state.getLastState() ?? undefined,
+    );
+  }
+
+  private async setCompanionState(rawState: unknown): Promise<unknown> {
+    if (!this.services) {
+      throw new Error('Services are not initialized');
+    }
+
+    const nextState = this.parseCompanionState(rawState);
+    if (!nextState) {
+      throw new Error(`Invalid companion state: ${String(rawState)}`);
+    }
+
+    if (nextState === CompanionState.ACTIVE) {
+      await this.openChatSurface('control server setState', {
+        focusInput: false,
+        focusWindow: false,
+      });
+      return this.getCurrentStatePayload();
+    }
+
+    if (this.services.state.getCurrentState() !== nextState) {
+      this.services.state.forceTransition(nextState, 'control server setState');
+    } else {
+      this.broadcastState(nextState, this.services.state.getLastState() ?? undefined);
+    }
+
+    return this.getCurrentStatePayload();
+  }
+
+  private async moveWindow(x: number, y: number): Promise<unknown> {
+    const window = await this.ensureMainWindow();
+    if (!window || window.isDestroyed()) {
+      throw new Error('Main window is unavailable');
+    }
+
+    const bounds = window.getBounds();
+    const display = screen.getDisplayMatching(bounds);
+    const workArea = display.workArea;
+    const nextX = this.clamp(Math.round(x), workArea.x, workArea.x + workArea.width - bounds.width);
+    const nextY = this.clamp(Math.round(y), workArea.y, workArea.y + workArea.height - bounds.height);
+
+    window.setPosition(nextX, nextY);
+    return {
+      moved: true,
+      bounds: window.getBounds(),
+    };
+  }
+
+  private async clickAt(x: number, y: number, button?: string): Promise<unknown> {
+    if (!this.services) {
+      throw new Error('Services are not initialized');
+    }
+
+    const mouseButton = button === 'middle' || button === 'right' || button === 'left'
+      ? button
+      : 'left';
+
+    return this.services.execution.click(x, y, mouseButton);
+  }
+
+  private async typeText(text: string): Promise<unknown> {
+    if (!this.services) {
+      throw new Error('Services are not initialized');
+    }
+
+    return this.services.execution.typeText(text);
+  }
+
+  private async takeScreenshot(): Promise<unknown> {
+    if (!this.services) {
+      throw new Error('Services are not initialized');
+    }
+
+    const data = await this.services.perception.captureBase64OnDemand(undefined, 'png');
+    return {
+      data,
+      format: 'png',
+      capturedAt: Date.now(),
+    };
+  }
+
+  private async displayMessage(text: string, speaker: ChatSpeaker = 'hermes'): Promise<unknown> {
+    const message = text.trim();
+    if (!message) {
+      throw new Error('Display message text cannot be empty');
+    }
+
+    await this.openChatSurface('display message', {
+      focusInput: false,
+      focusWindow: false,
+    });
+    this.displayChatMessage(message, speaker);
+
+    return {
+      displayed: true,
+      speaker,
+      text: message,
+      timestamp: Date.now(),
+    };
+  }
+
+  private async speak(text: string): Promise<unknown> {
+    const message = text.trim();
+    if (!message) {
+      return { spoken: false, reason: 'empty_text' };
+    }
+
+    if (process.platform !== 'darwin') {
+      this.logger.warn('TTS skipped: macOS say command is unavailable on this platform');
+      return { spoken: false, reason: 'unsupported_platform' };
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      execFile('say', [message], (error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+
+    return {
+      spoken: true,
+      text: message,
+      timestamp: Date.now(),
+    };
+  }
+
+  private async openChatSurface(
+    reason: string,
+    options: { focusWindow: boolean; focusInput: boolean },
+  ): Promise<BrowserWindow | null> {
+    const window = await this.ensureMainWindow();
+    if (!window || window.isDestroyed() || !this.services) {
+      return window;
+    }
+
+    this.runtimeSignals.activeUntil = Date.now() + 10_000;
+
+    if (this.services.state.getCurrentState() !== CompanionState.ACTIVE) {
+      this.services.state.forceTransition(CompanionState.ACTIVE, reason);
+    } else {
+      this.syncWindowBounds(UIState.ACTIVE);
+      this.updateWindowInteractivity(UIState.ACTIVE);
+    }
+
+    if (options.focusWindow) {
+      window.show();
+      window.focus();
+    } else {
+      window.showInactive();
+    }
+
+    if (options.focusInput) {
+      window.webContents.send('chat:focus-input');
+    }
+
+    return window;
+  }
+
+  private displayChatMessage(text: string, speaker: ChatSpeaker): void {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+      return;
+    }
+
+    this.mainWindow.webContents.send('chat:message', {
+      text,
+      speaker,
+      timestamp: Date.now(),
+    });
   }
 
   private async connectMcp(): Promise<void> {
@@ -835,9 +1151,54 @@ export class AppCoordinator extends EventEmitter {
       return;
     }
 
+    this.syncWindowBounds(uiState);
+
     const interactive = uiState === UIState.HINT || uiState === UIState.ACTIVE;
     this.mainWindow.setFocusable(interactive);
     this.mainWindow.setIgnoreMouseEvents(!interactive, { forward: !interactive });
+  }
+
+  private syncWindowBounds(uiState: UIState): void {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+      return;
+    }
+
+    const currentBounds = this.mainWindow.getBounds();
+    const targetWidth = uiState === UIState.ACTIVE
+      ? Math.max(this.config.overlayWidth, 360)
+      : this.config.overlayWidth;
+    const targetHeight = uiState === UIState.ACTIVE
+      ? Math.max(this.config.overlayHeight, 420)
+      : this.config.overlayHeight;
+
+    if (currentBounds.width === targetWidth && currentBounds.height === targetHeight) {
+      return;
+    }
+
+    const display = screen.getDisplayMatching(currentBounds);
+    const workArea = display.workArea;
+    const rightEdge = currentBounds.x + currentBounds.width;
+    const bottomEdge = currentBounds.y + currentBounds.height;
+    const nextX = this.clamp(
+      rightEdge - targetWidth,
+      workArea.x,
+      workArea.x + workArea.width - targetWidth,
+    );
+    const nextY = this.clamp(
+      bottomEdge - targetHeight,
+      workArea.y,
+      workArea.y + workArea.height - targetHeight,
+    );
+
+    this.mainWindow.setBounds(
+      {
+        x: nextX,
+        y: nextY,
+        width: targetWidth,
+        height: targetHeight,
+      },
+      true,
+    );
   }
 
   private setupErrorRecovery(): void {
@@ -882,6 +1243,48 @@ export class AppCoordinator extends EventEmitter {
       return 'evening';
     }
     return 'night';
+  }
+
+  private parseCompanionState(value: unknown): CompanionState | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    const normalized = value.trim().toUpperCase();
+    return (Object.values(CompanionState) as string[]).includes(normalized)
+      ? normalized as CompanionState
+      : null;
+  }
+
+  private requireString(params: Record<string, unknown>, key: string): string {
+    const value = params[key];
+    if (typeof value !== 'string' || !value.trim()) {
+      throw new Error(`Missing required string parameter: ${key}`);
+    }
+
+    return value.trim();
+  }
+
+  private optionalString(params: Record<string, unknown>, key: string): string | undefined {
+    const value = params[key];
+    return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  }
+
+  private requireNumber(params: Record<string, unknown>, key: string): number {
+    const value = params[key];
+    if (typeof value !== 'number' || Number.isNaN(value)) {
+      throw new Error(`Missing required numeric parameter: ${key}`);
+    }
+
+    return value;
+  }
+
+  private clamp(value: number, min: number, max: number): number {
+    if (max < min) {
+      return min;
+    }
+
+    return Math.min(max, Math.max(min, value));
   }
 }
 

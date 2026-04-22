@@ -17,11 +17,26 @@ interface MessagePayload {
   timestamp: number;
 }
 
+interface ChatMessagePayload {
+  text: string;
+  speaker?: string;
+  timestamp?: number;
+}
+
 type StateCallback = (payload: StatePayload) => void;
 type MessageCallback = (payload: MessagePayload) => void;
+type ChatMessageCallback = (payload: ChatMessagePayload) => void;
 
 const wrapListener = <TPayload>(channel: string, callback: (payload: TPayload) => void): (() => void) => {
   const listener = (_event: IpcRendererEvent, payload: TPayload) => callback(payload);
+  ipcRenderer.on(channel, listener);
+  return () => {
+    ipcRenderer.removeListener(channel, listener);
+  };
+};
+
+const wrapSignalListener = (channel: string, callback: () => void): (() => void) => {
+  const listener = () => callback();
   ipcRenderer.on(channel, listener);
   return () => {
     ipcRenderer.removeListener(channel, listener);
@@ -63,6 +78,14 @@ const hermesApi = {
 
   security: {
     checkOperation: (operation: string, source: string) => ipcRenderer.invoke('security:check', operation, source),
+  },
+
+  sendChatMessage: (text: string) => ipcRenderer.send('chat:send', text),
+
+  chat: {
+    send: (text: string) => ipcRenderer.send('chat:send', text),
+    onMessage: (callback: ChatMessageCallback) => wrapListener('chat:message', callback),
+    onFocusRequest: (callback: () => void) => wrapSignalListener('chat:focus-input', callback),
   },
 
   mcp: {

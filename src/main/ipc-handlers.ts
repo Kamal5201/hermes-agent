@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import log from 'electron-log/main.js';
 import type DatabaseManager from '../database/DatabaseManager';
 import type { LearningEngine } from '../learning/LearningEngine';
 import type { PerceptionModule } from '../perception/PerceptionModule';
@@ -74,6 +75,10 @@ export class DatabaseConfigStore implements ConfigStore {
   }
 }
 
+type IpcBridgeHandlers = {
+  onChatSend: (text: string) => Promise<void> | void;
+};
+
 export function setupIpcHandlers(
   perception: PerceptionModule,
   execution: ExecutionModule,
@@ -84,6 +89,7 @@ export function setupIpcHandlers(
   config: ConfigStore,
   sync: StateSyncManager,
   deviceRegistry: DeviceRegistry,
+  bridge: IpcBridgeHandlers,
 ): void {
   const handle = <TArgs extends unknown[], TResult>(
     channel: string,
@@ -113,6 +119,13 @@ export function setupIpcHandlers(
   handle('execution:closeApp', async (_event, bundleId: string) => execution.closeApp(bundleId));
 
   handle('state:getCurrent', async () => state.getCurrentState());
+
+  ipcMain.removeAllListeners('chat:send');
+  ipcMain.on('chat:send', (_event, text: string) => {
+    void Promise.resolve(bridge.onChatSend(text)).catch((error: unknown) => {
+      log.error('[IPC] chat:send failed', error);
+    });
+  });
 
   handle('learning:getProfile', async () => learning.getUserProfile());
   handle('learning:getPatterns', async () => learning.getPatterns());

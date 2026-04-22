@@ -15,6 +15,7 @@
       data-transition="steady"
     >
       <div class="companion-caption">Hermes Companion</div>
+      <div class="companion-drag-handle" aria-hidden="true"></div>
       <button
         id="learning-entry"
         class="companion-entry-pill"
@@ -85,6 +86,20 @@
         </div>
       </div>
 
+      <section id="chatPanel" class="companion-chat-panel" aria-hidden="true">
+        <div class="companion-chat-messages" id="chatMessages"></div>
+        <div class="companion-chat-input-row">
+          <input
+            type="text"
+            class="companion-chat-input"
+            id="chatInput"
+            placeholder="Ask Hermes..."
+            autocomplete="off"
+          />
+          <button class="companion-chat-send" id="chatSend" type="button" aria-label="Send message">↵</button>
+        </div>
+      </section>
+
       <div
         id="companion-hint-bubble"
         class="companion-hint-bubble"
@@ -139,6 +154,10 @@
       const habitsElement = document.getElementById('stat-habits');
       const focusElement = document.getElementById('stat-focus');
       const predictionsElement = document.getElementById('stat-predictions');
+      const chatPanelElement = document.getElementById('chatPanel');
+      const chatMessagesElement = document.getElementById('chatMessages');
+      const chatInputElement = document.getElementById('chatInput');
+      const chatSendButton = document.getElementById('chatSend');
 
       const defaultBubbleMessages = {
         stealth: '',
@@ -252,6 +271,69 @@
 
         element.classList.toggle('visible', visible);
         element.setAttribute('aria-hidden', String(!visible));
+      }
+
+      function setChatPanelVisible(visible) {
+        if (!chatPanelElement) {
+          return;
+        }
+
+        chatPanelElement.classList.toggle('visible', visible);
+        chatPanelElement.setAttribute('aria-hidden', String(!visible));
+
+        if (!visible && chatInputElement instanceof HTMLInputElement) {
+          chatInputElement.blur();
+        }
+      }
+
+      function focusChatInput() {
+        if (!(chatInputElement instanceof HTMLInputElement) || currentState !== 'active') {
+          return;
+        }
+
+        window.requestAnimationFrame(() => {
+          chatInputElement.focus();
+          chatInputElement.select();
+        });
+      }
+
+      function appendChatMessage(payload) {
+        if (!chatMessagesElement || !payload || typeof payload.text !== 'string') {
+          return;
+        }
+
+        const text = payload.text.trim();
+        if (!text) {
+          return;
+        }
+
+        const speaker = payload.speaker === 'user' ? 'user' : 'hermes';
+        const messageElement = document.createElement('div');
+        messageElement.className = speaker === 'user' ? 'user-msg' : 'hermes-msg';
+        messageElement.textContent = `${speaker === 'user' ? 'You' : 'Hermes'}: ${text}`;
+        chatMessagesElement.appendChild(messageElement);
+        chatMessagesElement.scrollTop = chatMessagesElement.scrollHeight;
+      }
+
+      function submitChatMessage() {
+        if (!(chatInputElement instanceof HTMLInputElement)) {
+          return;
+        }
+
+        const text = chatInputElement.value.trim();
+        if (!text) {
+          return;
+        }
+
+        const sendChat = window.hermes?.chat?.send ?? window.hermes?.sendChatMessage;
+        if (typeof sendChat === 'function') {
+          sendChat(text);
+        } else {
+          appendChatMessage({ text, speaker: 'user' });
+        }
+
+        chatInputElement.value = '';
+        focusChatInput();
       }
 
       function describeAge(timestamp) {
@@ -843,6 +925,11 @@
         }
 
         syncPanels();
+        setChatPanelVisible(nextState === 'active');
+
+        if (nextState === 'active' && previousState !== 'active') {
+          focusChatInput();
+        }
       }
 
       function startHeartbeat() {
@@ -854,6 +941,37 @@
             : (schedulerLagAverageMs * 0.75) + (lag * 0.25);
           lastSchedulerBeat = now;
         }, HEARTBEAT_INTERVAL_MS);
+      }
+
+      function wireChat() {
+        if (chatSendButton instanceof HTMLButtonElement) {
+          chatSendButton.addEventListener('click', () => {
+            submitChatMessage();
+          });
+        }
+
+        if (chatInputElement instanceof HTMLInputElement) {
+          chatInputElement.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter') {
+              return;
+            }
+
+            event.preventDefault();
+            submitChatMessage();
+          });
+        }
+
+        if (window.hermes?.chat?.onMessage) {
+          window.hermes.chat.onMessage((payload) => {
+            appendChatMessage(payload);
+          });
+        }
+
+        if (window.hermes?.chat?.onFocusRequest) {
+          window.hermes.chat.onFocusRequest(() => {
+            focusChatInput();
+          });
+        }
       }
 
       function wireLearningEntry() {
@@ -924,6 +1042,7 @@
 
       async function bootstrap() {
         hintBubble = await loadHintBubble();
+        wireChat();
         wireLearningEntry();
         wireMcpMessages();
         startHeartbeat();

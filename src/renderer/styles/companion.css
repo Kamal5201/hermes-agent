@@ -76,6 +76,8 @@
   --shadow-panel: 0 12px 32px rgba(8, 12, 22, 0.24);
   --transition-duration: 220ms;
   --retreat-duration: 300ms;
+  --chat-panel-height: 208px;
+  --active-stack-offset: 244px;
 }
 
 html,
@@ -150,6 +152,31 @@ body {
   transition: opacity var(--transition-duration) ease, transform var(--transition-duration) ease;
 }
 
+.companion-drag-handle {
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  width: 148px;
+  height: 24px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  -webkit-app-region: drag;
+  opacity: 0;
+  transition: opacity var(--transition-duration) ease;
+}
+
+.companion-drag-handle::before {
+  content: "";
+  width: 46px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+  box-shadow: 0 0 18px rgba(255, 255, 255, 0.12);
+}
+
 .companion-entry-pill {
   position: absolute;
   left: 22px;
@@ -176,6 +203,7 @@ body {
     box-shadow var(--transition-duration) ease,
     border-color var(--transition-duration) ease;
   pointer-events: auto;
+  -webkit-app-region: no-drag;
 }
 
 .companion-entry-pill.attention {
@@ -371,6 +399,11 @@ body {
   opacity: 0.96;
 }
 
+.companion-shell[data-state="hint"] .companion-drag-handle,
+.companion-shell[data-state="active"] .companion-drag-handle {
+  opacity: 1;
+}
+
 .companion-health,
 .companion-learning {
   position: absolute;
@@ -407,6 +440,113 @@ body {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
+}
+
+.companion-chat-panel {
+  position: absolute;
+  left: 22px;
+  right: 22px;
+  bottom: 24px;
+  height: var(--chat-panel-height);
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(20, 20, 30, 0.95), rgba(34, 38, 54, 0.92));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(20px);
+  box-shadow: var(--shadow-panel);
+  pointer-events: auto;
+  z-index: 2;
+}
+
+.companion-chat-panel.visible {
+  display: flex;
+}
+
+.companion-chat-messages {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  padding: 4px;
+  font-size: 13px;
+  color: #e0e0e0;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+.companion-chat-messages .user-msg,
+.companion-chat-messages .hermes-msg {
+  max-width: 88%;
+  padding: 8px 10px;
+  border-radius: 12px;
+  line-height: 1.45;
+}
+
+.companion-chat-messages .user-msg {
+  align-self: flex-end;
+  text-align: right;
+  color: #7eb8ff;
+  background: rgba(74, 144, 217, 0.16);
+}
+
+.companion-chat-messages .hermes-msg {
+  align-self: flex-start;
+  text-align: left;
+  color: #ffd700;
+  background: rgba(255, 215, 0, 0.12);
+}
+
+.companion-chat-input-row {
+  display: flex;
+  gap: 6px;
+}
+
+.companion-chat-input {
+  flex: 1;
+  min-height: 36px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 13px;
+  outline: none;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+.companion-chat-input::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.companion-chat-input:focus {
+  border-color: rgba(255, 215, 0, 0.5);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.companion-chat-send {
+  width: 36px;
+  min-height: 36px;
+  border-radius: 10px;
+  background: rgba(255, 215, 0, 0.2);
+  border: 1px solid rgba(255, 215, 0, 0.4);
+  color: #ffd700;
+  cursor: pointer;
+  font-size: 16px;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+.companion-shell[data-state="active"] .companion-anchor {
+  bottom: var(--active-stack-offset);
+}
+
+.companion-shell[data-state="active"] .companion-health {
+  bottom: calc(var(--chat-panel-height) + 40px);
 }
 
 .companion-health-header,
@@ -652,6 +792,7 @@ body {
   border: none;
   cursor: pointer;
   pointer-events: auto;
+  -webkit-app-region: no-drag;
   transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
 }
 
