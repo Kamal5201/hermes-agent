@@ -123,6 +123,27 @@
         <div id="companion-bubble" class="companion-bubble state-stealth" aria-live="polite"></div>
         <div id="companion-orb" class="companion-orb state-stealth" role="presentation"></div>
       </section>
+
+      <!-- Spotlight Panel -->
+      <div id="spotlight-overlay" class="spotlight-overlay" role="dialog" aria-label="Hermes Spotlight" aria-modal="true">
+        <div class="spotlight-panel">
+          <div class="spotlight-search-bar">
+            <span class="spotlight-icon">🔍</span>
+            <input
+              id="spotlight-input"
+              class="spotlight-input"
+              type="text"
+              placeholder="询问 Hermes..."
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+            />
+            <span class="spotlight-hint">esc 关闭</span>
+          </div>
+          <div id="spotlight-messages" class="spotlight-messages" role="log" aria-live="polite"></div>
+        </div>
+      </div>
     </main>
 
     <script type="module">
@@ -969,7 +990,116 @@
 
         if (window.hermes?.chat?.onFocusRequest) {
           window.hermes.chat.onFocusRequest(() => {
-            focusChatInput();
+            showSpotlight();
+          });
+        }
+
+        // Wire Spotlight after chat
+        wireSpotlight();
+      }
+
+      // ─── Spotlight ─────────────────────────────────────────────────────
+      let spotlightVisible = false;
+      let spotlightAutoCloseTimer = null;
+      const SPOTLIGHT_AUTO_CLOSE_MS = 4000;
+
+      const spotlightOverlay = document.getElementById('spotlight-overlay');
+      const spotlightInput  = document.getElementById('spotlight-input');
+      const spotlightMessages = document.getElementById('spotlight-messages');
+
+      function showSpotlight() {
+        if (spotlightVisible) return;
+        spotlightVisible = true;
+        spotlightOverlay?.classList.add('visible');
+        setTimeout(() => spotlightInput?.focus(), 50);
+        resetSpotlightAutoClose();
+      }
+
+      function hideSpotlight() {
+        if (!spotlightVisible) return;
+        spotlightVisible = false;
+        spotlightOverlay?.classList.remove('visible');
+        if (spotlightInput instanceof HTMLInputElement) {
+          spotlightInput.value = '';
+        }
+        if (spotlightAutoCloseTimer !== null) {
+          clearTimeout(spotlightAutoCloseTimer);
+          spotlightAutoCloseTimer = null;
+        }
+      }
+
+      function resetSpotlightAutoClose() {
+        if (spotlightAutoCloseTimer !== null) {
+          clearTimeout(spotlightAutoCloseTimer);
+        }
+        spotlightAutoCloseTimer = window.setTimeout(hideSpotlight, SPOTLIGHT_AUTO_CLOSE_MS);
+      }
+
+      function appendSpotlightMessage(text, type) {
+        if (!spotlightMessages) return;
+        const div = document.createElement('div');
+        div.className = `spotlight-message ${type}`;
+        if (type === 'hermes') {
+          div.innerHTML = `<span class="spotlight-message-dot">●</span><span class="spotlight-message-text">${escapeHtml(text)}</span>`;
+        } else {
+          div.innerHTML = `<span class="spotlight-message-text">${escapeHtml(text)}</span>`;
+        }
+        spotlightMessages.appendChild(div);
+        spotlightMessages.scrollTop = spotlightMessages.scrollHeight;
+        resetSpotlightAutoClose();
+      }
+
+      function escapeHtml(text) {
+        const d = document.createElement('div');
+        d.textContent = text;
+        return d.innerHTML;
+      }
+
+      function submitSpotlightMessage() {
+        if (!(spotlightInput instanceof HTMLInputElement)) return;
+        const text = spotlightInput.value.trim();
+        if (!text) return;
+        appendSpotlightMessage(text, 'user');
+        spotlightInput.value = '';
+        window.hermes?.chat?.send(text);
+        resetSpotlightAutoClose();
+      }
+
+      function wireSpotlight() {
+        // Keyboard events
+        if (spotlightInput instanceof HTMLInputElement) {
+          spotlightInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+              hideSpotlight();
+              return;
+            }
+            if (event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault();
+              submitSpotlightMessage();
+            }
+            resetSpotlightAutoClose();
+          });
+
+          spotlightInput.addEventListener('input', () => {
+            resetSpotlightAutoClose();
+          });
+        }
+
+        // Click outside → close
+        if (spotlightOverlay) {
+          spotlightOverlay.addEventListener('click', (event) => {
+            if (event.target === spotlightOverlay) {
+              hideSpotlight();
+            }
+          });
+        }
+
+        // Hermes messages appear in Spotlight too
+        if (window.hermes?.chat?.onMessage) {
+          window.hermes.chat.onMessage((payload) => {
+            if (payload.speaker !== 'user' && payload.text) {
+              appendSpotlightMessage(payload.text, 'hermes');
+            }
           });
         }
       }
