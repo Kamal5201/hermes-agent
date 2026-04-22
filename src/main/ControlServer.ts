@@ -19,12 +19,12 @@ export interface ControlServerApp {
   handleControlCommand(action: string, params?: Record<string, unknown>): Promise<unknown>;
   getCurrentState(): string;
   forceState(state: string): void;
-  moveWindow(x: number, y: number): void;
-  clickAt(x: number, y: number): Promise<void>;
-  typeText(text: string): Promise<void>;
-  takeScreenshot(): Promise<string | null>;
-  displayMessage(text: string, speaker?: string): void;
-  speak(text: string): void;
+  moveWindow(x: number, y: number): Promise<unknown>;
+  clickAt(x: number, y: number, button?: string): Promise<unknown>;
+  typeText(text: string): Promise<unknown>;
+  takeScreenshot(): Promise<unknown>;
+  displayMessage(text: string, speaker?: string): Promise<unknown>;
+  speak(text: string): Promise<unknown>;
 }
 
 type CommandRequest = {
@@ -233,7 +233,7 @@ export class ControlServer {
       this.app.displayMessage(`❌ 自检失败，发现 ${report.criticalBugs.length} 个关键问题`, 'hermes');
       this.app.speak('自检失败，发现关键问题，需要修复');
     } else {
-      this.app.displayMessage(`⚠️ 自检部分通过，${report.failed.length} 项待改进`, 'hermes');
+      this.app.displayMessage(`⚠️ 自检部分通过，${report.autoFixable.length} 项待改进`, 'hermes');
       this.app.speak('自检部分通过，部分功能待改进');
     }
 

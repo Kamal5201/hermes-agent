@@ -878,7 +878,7 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
     return this.getCurrentStatePayload();
   }
 
-  private async moveWindow(x: number, y: number): Promise<unknown> {
+  public async moveWindow(x: number, y: number): Promise<unknown> {
     const window = await this.ensureMainWindow();
     if (!window || window.isDestroyed()) {
       throw new Error('Main window is unavailable');
@@ -897,7 +897,7 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
     };
   }
 
-  private async clickAt(x: number, y: number, button?: string): Promise<unknown> {
+  public async clickAt(x: number, y: number, button?: string): Promise<unknown> {
     if (!this.services) {
       throw new Error('Services are not initialized');
     }
@@ -909,7 +909,7 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
     return this.services.execution.click(x, y, mouseButton);
   }
 
-  private async typeText(text: string): Promise<unknown> {
+  public async typeText(text: string): Promise<unknown> {
     if (!this.services) {
       throw new Error('Services are not initialized');
     }
@@ -917,7 +917,7 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
     return this.services.execution.typeText(text);
   }
 
-  private async takeScreenshot(): Promise<unknown> {
+  public async takeScreenshot(): Promise<unknown> {
     if (!this.services) {
       throw new Error('Services are not initialized');
     }
@@ -930,7 +930,7 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
     };
   }
 
-  private async displayMessage(text: string, speaker: ChatSpeaker = 'hermes'): Promise<unknown> {
+  public async displayMessage(text: string, speaker: ChatSpeaker = 'hermes'): Promise<unknown> {
     const message = text.trim();
     if (!message) {
       throw new Error('Display message text cannot be empty');
@@ -950,7 +950,7 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
     };
   }
 
-  private async speak(text: string): Promise<unknown> {
+  public async speak(text: string): Promise<unknown> {
     const message = text.trim();
     if (!message) {
       return { spoken: false, reason: 'empty_text' };

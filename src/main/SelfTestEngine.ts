@@ -38,13 +38,12 @@ export interface ControlServerApp {
   handleControlCommand(action: string, params?: Record<string, unknown>): Promise<unknown>;
   getCurrentState(): string;
   forceState(state: string): void;
-  moveWindow(x: number, y: number): void;
-  clickAt(x: number, y: number): Promise<void>;
-  typeText(text: string): Promise<void>;
-  takeScreenshot(): Promise<string | null>;
-  displayMessage(text: string, speaker?: string): void;
-  speak(text: string): void;
-  setControlServerApp?: (fn: () => { handleControlCommand: (a: string, p?: Record<string, unknown>) => Promise<unknown>; popInbox: () => unknown[] }) => void;
+  moveWindow(x: number, y: number): Promise<unknown>;
+  clickAt(x: number, y: number, button?: string): Promise<unknown>;
+  typeText(text: string): Promise<unknown>;
+  takeScreenshot(): Promise<unknown>;
+  displayMessage(text: string, speaker?: string): Promise<unknown>;
+  speak(text: string): Promise<unknown>;
 }
 
 export class SelfTestEngine {
@@ -203,7 +202,7 @@ export class SelfTestEngine {
     const t = this.startTest('soft:memory', 'soft');
     try {
       await this.delay(200); // 给 GC 一点时间
-      const mem = process.memoryUsage?.() ?? {};
+      const mem = process.memoryUsage?.() as NodeJS.MemoryUsage ?? { heapUsed: 0, heapTotal: 0, rss: 0, external: 0, arrayBuffers: 0 };
       const usedMB = ((mem.heapUsed ?? 0) / 1024 / 1024).toFixed(1);
       const totalMB = ((mem.heapTotal ?? 0) / 1024 / 1024).toFixed(1);
       t.passed = true;
