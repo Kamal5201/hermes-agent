@@ -643,19 +643,21 @@ export class AppCoordinator extends EventEmitter {
     const candidates = [
       path.resolve(PROJECT_ROOT, 'dist/renderer/index.html'),
       path.resolve(PROJECT_ROOT, 'src/renderer/index.html'),
+      path.join(app.getAppPath(), 'src/renderer/index.html'),
     ];
 
     for (const candidate of candidates) {
+      this.logger.debug(`Trying renderer path: ${candidate} exists=${existsSync(candidate)}`);
       if (existsSync(candidate)) {
         return candidate;
       }
     }
 
-    throw new Error('Unable to resolve renderer/index.html');
+    throw new Error(`Unable to resolve renderer/index.html. Looked: ${candidates.join(', ')}`);
   }
 
   private resolvePreloadFile(): string {
-    const preloadPath = path.resolve(PROJECT_ROOT, 'dist/preload/index.js');
+    const preloadPath = path.join(app.getAppPath(), 'dist/preload/index.js');
 
     if (!existsSync(preloadPath)) {
       throw new Error(`Preload bundle not found: ${preloadPath}. Run TypeScript build first.`);
