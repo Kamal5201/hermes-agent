@@ -21,6 +21,21 @@
     "directories": {
       "output": "release"
     },
+    "files": [
+      "dist/**",
+      "src/renderer/**",
+      "src/ui/**",
+      "src/preload/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**",
+      "node_modules/@computer-use/**",
+      "node_modules/nut-js/**",
+      "node_modules/node-pty/**",
+      "node_modules/node-screenshots/**",
+      "node_modules/sharp/**"
+    ],
     "win": {
       "target": [
         {
