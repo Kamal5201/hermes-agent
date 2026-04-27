@@ -12,6 +12,7 @@
  */
 
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { app, BrowserWindow, globalShortcut, screen } from 'electron';
 import path from 'path';
 import { EventEmitter } from 'events';
@@ -34,6 +35,11 @@ import { AppleStyleUI, UIState, companionStateToUiState } from '../ui/AppleStyle
 import { DatabaseConfigStore, setupIpcHandlers } from './ipc-handlers';
 import ControlServer, { type ControlInboxMessage, type ControlServerApp } from './ControlServer';
 import { getLogger, initializeLogger } from './logger';
+import CheckpointStore from '../remote/CheckpointStore';
+import RemoteAccess, { type RemoteDevice, type RemoteSession } from '../remote/RemoteAccess';
+import { isTerminalTaskStatus, type RemoteTaskKind, type RemoteTaskPriority, type TaskConstraints, type TaskEnvelope } from '../remote/contracts/TaskEnvelope';
+import type { TaskResult } from '../remote/contracts/TaskResult';
+import { RESUME_ELIGIBLE_TASK_STATUSES } from '../remote/TaskPolicy';
 
 // 类型定义
 export type AppConfig = {
@@ -80,6 +86,7 @@ type ChatSpeaker = 'user' | 'hermes' | 'system';
 // 导出类型供外部使用 - 使用命名导出
 
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
+const RESUMABLE_REMOTE_TASK_STATUSES = RESUME_ELIGIBLE_TASK_STATUSES;
 
 // 加载环境配置
 function loadEnvConfig(): AppConfig {
@@ -109,7 +116,10 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
   
   private readonly config: AppConfig;
   private readonly logger: ReturnType<typeof getLogger>;
-  
+  private readonly diagPath: string;
+  private readonly remoteAccess: RemoteAccess;
+  private readonly checkpointStore: CheckpointStore;
+
   private mainWindow: BrowserWindow | null = null;
   private services: AppCoordinatorServices | null = null;
   private windowPipeline: WindowEventPipeline | null = null;
@@ -143,9 +153,26 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
     });
     
     this.logger = getLogger('AppCoordinator');
+    this.diagPath = path.join(app.getPath('userData'), 'hermes-diag.log');
+    this.remoteAccess = new RemoteAccess({
+      windowsMcpAdapter: this.config.mcpUrl
+        ? { baseUrl: this.config.mcpUrl }
+        : undefined,
+    });
+    this.checkpointStore = new CheckpointStore();
     this.runtimeSignals = this.createRuntimeSignals();
     this.setupErrorRecovery();
-    
+
+    this.remoteAccess.on('taskQueued', (payload) => {
+      this.logger.info('Remote task queued', payload);
+    });
+    this.remoteAccess.on('taskResumed', (payload) => {
+      this.logger.info('Remote task resumed', payload);
+    });
+    this.remoteAccess.on('taskCancelled', (payload) => {
+      this.logger.info('Remote task cancelled', payload);
+    });
+
     log.info('AppCoordinator instance created');
   }
 
@@ -264,6 +291,8 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
       }
       this.controlServer = null;
     }
+
+    this.remoteAccess.disconnect();
 
     if (this.services) {
       try {
@@ -393,9 +422,93 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
         );
       case 'speak':
         return this.speak(this.requireString(params, 'text'));
+      case 'discoverRemoteWorkers':
+      case 'listRemoteWorkers':
+      case 'getWorkers':
+        return this.listRemoteWorkers();
+      case 'connectRemoteWorker':
+      case 'connectWorker':
+        return this.connectRemoteWorker(this.requireString(params, 'deviceId'));
+      case 'createTask':
+      case 'submitTask':
+      case 'taskCreate':
+        return this.createRemoteTask(params);
+      case 'getTask':
+      case 'taskStatus':
+      case 'getTaskStatus':
+        return this.getRemoteTaskStatus(this.requireString(params, 'taskId'));
+      case 'writeTaskCheckpoint':
+      case 'taskCheckpoint':
+        return this.writeRemoteTaskCheckpoint(
+          this.requireString(params, 'taskId'),
+          this.requireRecord(params, 'checkpoint'),
+          this.optionalRecord(params, 'options') ?? {},
+        );
+      case 'resumeTask':
+      case 'taskResume':
+        return this.resumeRemoteTask(this.requireString(params, 'taskId'), params);
+      case 'cancelTask':
+      case 'taskCancel':
+        return this.cancelRemoteTask(this.requireString(params, 'taskId'));
       default:
         throw new Error(`Unsupported control action: ${action}`);
     }
+  }
+
+  public async listRemoteWorkers(): Promise<{
+    workers: RemoteDevice[];
+    currentSession: RemoteSession | null;
+    refreshedAt: number;
+  }> {
+    const workers = await this.remoteAccess.discoverDevices({ platform: 'windows' });
+    return {
+      workers,
+      currentSession: this.remoteAccess.getCurrentSession(),
+      refreshedAt: Date.now(),
+    };
+  }
+
+  public async connectRemoteWorker(deviceId: string): Promise<RemoteSession> {
+    return this.remoteAccess.connect(deviceId);
+  }
+
+  public async createRemoteTask(params: Record<string, unknown>): Promise<unknown> {
+    const task = this.buildRemoteTaskEnvelope(params);
+    const { taskId } = await this.remoteAccess.submitTask(task);
+    return this.getRemoteTaskStatus(taskId);
+  }
+
+  public async getRemoteTaskStatus(taskId: string): Promise<unknown> {
+    const task = await this.remoteAccess.getTask(taskId);
+    if (!task) {
+      throw new Error(`Task not found: ${taskId}`);
+    }
+
+    return this.buildRemoteTaskPayload(task);
+  }
+
+  public async writeRemoteTaskCheckpoint(
+    taskId: string,
+    checkpoint: Record<string, unknown>,
+    options: Record<string, unknown> = {},
+  ): Promise<unknown> {
+    const updatedTask = await this.remoteAccess.writeTaskCheckpoint(taskId, checkpoint, {
+      status: this.parseCheckpointStatus(options.status),
+      reason: this.optionalString(options, 'reason'),
+      metadata: this.optionalRecord(options, 'metadata'),
+    });
+    return this.buildRemoteTaskPayload(updatedTask);
+  }
+
+  public async resumeRemoteTask(taskId: string, params: Record<string, unknown> = {}): Promise<unknown> {
+    const checkpointPatch = this.optionalRecord(params, 'checkpoint');
+    await this.remoteAccess.resumeTask(taskId, checkpointPatch);
+    return this.getRemoteTaskStatus(taskId);
+  }
+
+  public async cancelRemoteTask(taskId: string): Promise<unknown> {
+    await this.remoteAccess.cancelTask(taskId);
+    return this.getRemoteTaskStatus(taskId);
   }
 
   // ============ 私有方法 ============
@@ -1433,6 +1546,193 @@ export class AppCoordinator extends EventEmitter implements ControlServerApp {
       }
       this.speak('请回复是继续，否取消');
     }
+  }
+
+  private buildRemoteTaskEnvelope(params: Record<string, unknown>): TaskEnvelope {
+    const taskParams = this.optionalRecord(params, 'task') ?? params;
+    const target = this.optionalString(taskParams, 'target');
+    if (target && target !== 'windows') {
+      throw new Error(`Unsupported remote task target: ${target}`);
+    }
+
+    const now = Date.now();
+    return {
+      id: this.optionalString(taskParams, 'id') ?? randomUUID(),
+      kind: this.parseRemoteTaskKind(taskParams.kind),
+      target: 'windows',
+      intent: this.requireString(taskParams, 'intent'),
+      priority: this.parseRemoteTaskPriority(taskParams.priority),
+      createdAt: now,
+      updatedAt: now,
+      status: 'queued',
+      deviceId: this.optionalString(taskParams, 'deviceId'),
+      input: this.optionalRecord(taskParams, 'input'),
+      checkpoint: this.optionalRecord(taskParams, 'checkpoint'),
+      constraints: this.parseTaskConstraints(taskParams),
+      metadata: this.optionalRecord(taskParams, 'metadata'),
+    };
+  }
+
+  private async buildRemoteTaskPayload(task: TaskEnvelope): Promise<{
+    task: TaskEnvelope;
+    result: TaskResult | null;
+    archive: ReturnType<CheckpointStore['getTaskArchive']>;
+    terminal: boolean;
+    resumeEligible: boolean;
+  }> {
+    const hydratedTask = await this.checkpointStore.hydrateTask(task.id) ?? task;
+    const result = await this.checkpointStore.loadResult(task.id);
+    return {
+      task: hydratedTask,
+      result,
+      archive: this.checkpointStore.getTaskArchive(task.id),
+      terminal: isTerminalTaskStatus(hydratedTask.status),
+      resumeEligible: RESUMABLE_REMOTE_TASK_STATUSES.has(hydratedTask.status),
+    };
+  }
+
+  private parseRemoteTaskKind(value: unknown): RemoteTaskKind {
+    switch (value) {
+      case 'browser':
+      case 'desktop':
+      case 'hybrid':
+        return value;
+      case undefined:
+      case null:
+        return 'desktop';
+      default:
+        throw new Error(`Invalid remote task kind: ${String(value)}`);
+    }
+  }
+
+  private parseRemoteTaskPriority(value: unknown): RemoteTaskPriority {
+    switch (value) {
+      case 'high':
+      case 'normal':
+      case 'low':
+        return value;
+      case undefined:
+      case null:
+        return 'normal';
+      default:
+        throw new Error(`Invalid remote task priority: ${String(value)}`);
+    }
+  }
+
+  private parseTaskConstraints(params: Record<string, unknown>): TaskConstraints | undefined {
+    const constraints = this.optionalRecord(params, 'constraints');
+    if (!constraints) {
+      return undefined;
+    }
+
+    const normalized: TaskConstraints = {};
+    const interactiveSessionRequired = this.optionalBoolean(constraints, 'interactiveSessionRequired');
+    if (interactiveSessionRequired !== undefined) {
+      normalized.interactiveSessionRequired = interactiveSessionRequired;
+    }
+
+    const browserPreferred = this.optionalBoolean(constraints, 'browserPreferred');
+    if (browserPreferred !== undefined) {
+      normalized.browserPreferred = browserPreferred;
+    }
+
+    const maxRetries = this.optionalInteger(constraints, 'maxRetries');
+    if (maxRetries !== undefined) {
+      normalized.maxRetries = maxRetries;
+    }
+
+    const timeoutMs = this.optionalInteger(constraints, 'timeoutMs');
+    if (timeoutMs !== undefined) {
+      normalized.timeoutMs = timeoutMs;
+    }
+
+    const requiredCapabilities = this.optionalStringArray(constraints, 'requiredCapabilities');
+    if (requiredCapabilities) {
+      normalized.requiredCapabilities = requiredCapabilities;
+    }
+
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
+  }
+
+  private parseCheckpointStatus(value: unknown): TaskEnvelope['status'] | undefined {
+    switch (value) {
+      case undefined:
+      case null:
+        return undefined;
+      case 'queued':
+      case 'routing':
+      case 'running':
+      case 'wait_login':
+      case 'blocked':
+      case 'failed_retryable':
+      case 'failed_terminal':
+      case 'completed':
+      case 'cancelled':
+        return value;
+      default:
+        throw new Error(`Invalid task status: ${String(value)}`);
+    }
+  }
+
+  private requireRecord(params: Record<string, unknown>, key: string): Record<string, unknown> {
+    const value = this.optionalRecord(params, key);
+    if (!value) {
+      throw new Error(`Missing required object parameter: ${key}`);
+    }
+
+    return value;
+  }
+
+  private optionalRecord(params: Record<string, unknown>, key: string): Record<string, unknown> | undefined {
+    const value = params[key];
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+
+    if (typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`Expected object parameter: ${key}`);
+    }
+
+    return { ...(value as Record<string, unknown>) };
+  }
+
+  private optionalBoolean(params: Record<string, unknown>, key: string): boolean | undefined {
+    const value = params[key];
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+
+    if (typeof value !== 'boolean') {
+      throw new Error(`Expected boolean parameter: ${key}`);
+    }
+
+    return value;
+  }
+
+  private optionalInteger(params: Record<string, unknown>, key: string): number | undefined {
+    const value = params[key];
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+
+    if (typeof value !== 'number' || !Number.isInteger(value)) {
+      throw new Error(`Expected integer parameter: ${key}`);
+    }
+
+    return value;
+  }
+
+  private optionalStringArray(params: Record<string, unknown>, key: string): string[] | undefined {
+    const value = params[key];
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+
+    if (!Array.isArray(value) || !value.every((item) => typeof item === 'string' && item.trim())) {
+      throw new Error(`Expected string[] parameter: ${key}`);
+    }
+
+    return value.map((item) => item.trim());
   }
 
   private requireString(params: Record<string, unknown>, key: string): string {
